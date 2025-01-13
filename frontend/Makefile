@@ -1,6 +1,5 @@
 DOCKER_USERNAME := $(DOCKER_USERNAME)
 IMAGE_TAG := $(IMAGE_TAG)
-MIRROR := $(MIRROR)
 
 ifneq ($(strip $(DOCKER_USERNAME)),)
   imageOwner := $(DOCKER_USERNAME)/
@@ -18,12 +17,17 @@ buildTargets := \
 	desktop \
 	providers/terminal \
 	providers/adminer \
-	providers/bytebase \
 	providers/costcenter \
 	providers/dbprovider \
 	providers/applaunchpad \
 	providers/imagehub \
-	providers/template
+	providers/template \
+	providers/cronjob \
+	providers/license \
+	providers/kubepanel \
+	providers/objectstorage \
+	providers/devbox \
+	providers/workorder
 
 buildTargets-all := $(addprefix image-build-,$(buildTargets))
 pushTargets-all := $(addprefix image-push-,$(buildTargets))
@@ -59,12 +63,12 @@ image-prebuild: pnpm-lock.yaml
 	docker build --platform=linux/amd64 --target deps . -t $(imageOwner)sealos-deps:dev
 
 image-build-providers/%: image-prebuild
-	docker build --platform=linux/amd64 -t $(imageOwner)sealos-$*:$(imageTag) --build-arg path=providers/$* --build-arg name=$* --build-arg mirror=$(MIRROR) . 
+	docker build --platform=linux/amd64 -t $(imageOwner)sealos-$*:$(imageTag) --build-arg path=providers/$* --build-arg name=$* .
 image-build-%: image-prebuild
-	docker build --platform=linux/amd64 -t $(imageOwner)sealos-$*:$(imageTag) --build-arg path=$* --build-arg name=$* --build-arg mirror=$(MIRROR) . 
+	docker build --platform=linux/amd64 -t $(imageOwner)sealos-$*:$(imageTag) --build-arg path=$* --build-arg name=$* .
 
 image-push-providers/%: image-build-providers/%
-	docker push $(imageOwner)sealos-$*:$(imageTag) 
+	docker push $(imageOwner)sealos-$*:$(imageTag)
 image-push-%: image-build-%
 	docker push $(imageOwner)sealos-$*:$(imageTag)
 # Default target to run all builds.

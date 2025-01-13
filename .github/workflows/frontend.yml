@@ -3,39 +3,51 @@ name: Build Frontend Image
 on:
   create:
     tags:
-  workflow_dispatch:
+  workflow_call:
     inputs:
       push_image:
-        description: "Push image"
+        description: 'Push image'
         required: false
         type: boolean
         default: false
       push_image_tag:
-        description: "Push image tag"
-        default: "latest"
+        description: 'Push image tag'
+        default: 'latest'
+        required: false
+        type: string
+  workflow_dispatch:
+    inputs:
+      push_image:
+        description: 'Push image'
+        required: false
+        type: boolean
+        default: false
+      push_image_tag:
+        description: 'Push image tag'
+        default: 'latest'
         required: false
         type: string
   push:
-    branches: ["main"]
+    branches: ['main']
     paths:
-      - "frontend/desktop/**"
-      - "frontend/providers/**"
-      - ".github/workflows/frontend.yml"
-      - "!**/*.md"
-      - "!**/*.yaml"
+      - 'frontend/desktop/**'
+      - 'frontend/providers/**'
+      - '.github/workflows/frontend.yml'
+      - '!**/*.md'
+      - '!**/*.yaml'
   pull_request:
-    branches: ["*"]
+    branches: ['*']
     paths:
-      - "frontend/desktop/**"
-      - "frontend/providers/**"
-      - ".github/workflows/frontend.yml"
-      - "!**/*.md"
-      - "!**/*.yaml"
+      - 'frontend/desktop/**'
+      - 'frontend/providers/**'
+      - '.github/workflows/frontend.yml'
+      - '!**/*.md'
+      - '!**/*.yaml'
 
 env:
   # Common versions
-  GO_VERSION: "1.20"
-  DEFAULT_OWNER: "labring"
+  GO_VERSION: '1.20'
+  DEFAULT_OWNER: 'labring'
 
 jobs:
   image-build:
@@ -44,14 +56,18 @@ jobs:
       matrix:
         module:
           [
+            providers/license,
+            providers/cronjob,
             providers/template,
             providers/adminer,
             providers/applaunchpad,
-            providers/bytebase,
-            providers/imagehub,
             providers/terminal,
             providers/dbprovider,
             providers/costcenter,
+            providers/objectstorage,
+            providers/kubepanel,
+            providers/workorder,
+            providers/devbox,
             desktop,
           ]
     steps:
@@ -103,12 +119,21 @@ jobs:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GH_PAT }}
-
+      - name: Cache pnpm-store
+        uses: actions/cache@v3
+        with:
+          path: pnpm-store
+          key: pnpm-store-${{ hashFiles('Dockerfile') }}
+      - name: inject pnpm-store into docker
+        uses: reproducible-containers/buildkit-cache-dance@v2.1.2
+        with:
+          cache-source: pnpm-store
       - name: Build And Push
         uses: docker/build-push-action@v4
         with:
           context: ./frontend
           file: ./frontend/Dockerfile
+          platforms: linux/amd64,linux/arm64
           build-args: |
             name=${{ env.MODULE_NAME }}
             path=${{ matrix.module }}
@@ -116,8 +141,12 @@ jobs:
           push: ${{ (github.event_name == 'push') ||(github.event_name == 'create') || (inputs.push_image == true)  }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
   save-sealos:
     uses: ./.github/workflows/import-save-sealos.yml
+    with:
+      artifact_name: sealos-frontend
   cluster-image-build:
     if: ${{ (github.event_name == 'push') ||(github.event_name == 'create') || (inputs.push_image == true)  }}
     needs:
@@ -128,14 +157,18 @@ jobs:
       matrix:
         module:
           [
+            providers/license,
+            providers/cronjob,
             providers/template,
             providers/adminer,
             providers/applaunchpad,
-            providers/bytebase,
-            providers/imagehub,
             providers/terminal,
             providers/dbprovider,
             providers/costcenter,
+            providers/objectstorage,
+            providers/kubepanel,
+            providers/workorder,
+            providers/devbox,
             desktop,
           ]
     steps:
@@ -172,9 +205,9 @@ jobs:
           echo latest_cluster_image=ghcr.io/${{ github.repository_owner }}/sealos-cloud-${{ env.MODULE_NAME }}-frontend:latest >> $GITHUB_OUTPUT
 
       - name: Download sealos
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
-          name: sealos
+          name: sealos-frontend
           path: /tmp/
       - name: Verify sealos
         run: |
@@ -211,14 +244,14 @@ jobs:
         with:
           version: v0.0.8-rc1
         env:
-          GH_TOKEN: "${{ secrets.GH_PAT }}"
-          SEALOS_TYPE: "issue_renew"
-          SEALOS_ISSUE_TITLE: "[DaylyReport] Auto build for sealos"
-          SEALOS_ISSUE_BODYFILE: "scripts/ISSUE_RENEW.md"
-          SEALOS_ISSUE_LABEL: "dayly-report"
-          SEALOS_ISSUE_TYPE: "day"
-          SEALOS_ISSUE_REPO: "labring-actions/cluster-image"
-          SEALOS_COMMENT_BODY: "/imagesync ${{ steps.prepare.outputs.cluster_image }}"
+          GH_TOKEN: '${{ secrets.GH_PAT }}'
+          SEALOS_TYPE: 'issue_renew'
+          SEALOS_ISSUE_TITLE: '[DaylyReport] Auto build for sealos'
+          SEALOS_ISSUE_BODYFILE: 'scripts/ISSUE_RENEW.md'
+          SEALOS_ISSUE_LABEL: 'dayly-report'
+          SEALOS_ISSUE_TYPE: 'day'
+          SEALOS_ISSUE_REPO: 'labring-actions/cluster-image'
+          SEALOS_COMMENT_BODY: '/imagesync ${{ steps.prepare.outputs.cluster_image }}'
 
       - name: Renew issue and Sync Images for ${{ steps.prepare.outputs.latest_cluster_image }}
         uses: labring/gh-rebot@v0.0.6
@@ -226,11 +259,11 @@ jobs:
         with:
           version: v0.0.8-rc1
         env:
-          GH_TOKEN: "${{ secrets.GH_PAT }}"
-          SEALOS_TYPE: "issue_renew"
-          SEALOS_ISSUE_TITLE: "[DaylyReport] Auto build for sealos"
-          SEALOS_ISSUE_BODYFILE: "scripts/ISSUE_RENEW.md"
-          SEALOS_ISSUE_LABEL: "dayly-report"
-          SEALOS_ISSUE_TYPE: "day"
-          SEALOS_ISSUE_REPO: "labring-actions/cluster-image"
-          SEALOS_COMMENT_BODY: "/imagesync ${{ steps.prepare.outputs.latest_cluster_image }}"
+          GH_TOKEN: '${{ secrets.GH_PAT }}'
+          SEALOS_TYPE: 'issue_renew'
+          SEALOS_ISSUE_TITLE: '[DaylyReport] Auto build for sealos'
+          SEALOS_ISSUE_BODYFILE: 'scripts/ISSUE_RENEW.md'
+          SEALOS_ISSUE_LABEL: 'dayly-report'
+          SEALOS_ISSUE_TYPE: 'day'
+          SEALOS_ISSUE_REPO: 'labring-actions/cluster-image'
+          SEALOS_COMMENT_BODY: '/imagesync ${{ steps.prepare.outputs.latest_cluster_image }}'

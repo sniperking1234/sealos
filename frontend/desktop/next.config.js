@@ -13,11 +13,22 @@ const withPWA = require('next-pwa')({
 const nextConfig = withPWA({
   i18n,
   reactStrictMode: false,
+  async redirects() {
+    if (isProduction) {
+      return [
+        {
+          source: '/api/dev/:slug',
+          destination: '/',
+          permanent: true
+        }
+      ];
+    } else {
+      return [];
+    }
+  },
   swcMinify: isProduction,
   output: 'standalone',
-  typescript: {
-    ignoreBuildErrors: true
-  },
+  transpilePackages: ['@sealos/ui', 'sealos-desktop-sdk', '@sealos/driver'],
   experimental: {
     outputFileTracingRoot: path.join(__dirname, '../')
   }

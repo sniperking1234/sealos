@@ -7,16 +7,13 @@ spec:
   data:
     desc: sealos CLoud costcenter
     url: "https://costcenter.{{ .cloudDomain }}{{ if .cloudPort }}:{{ .cloudPort }}{{ end }}"
-  icon: "https://costcenter.{{ .cloudDomain }}{{ if .cloudPort }}:{{ .cloudPort }}{{ end }}/logo.png"
+  icon: "https://costcenter.{{ .cloudDomain }}{{ if .cloudPort }}:{{ .cloudPort }}{{ end }}/logo.svg"
   i18n:
     zh:
       name: 费用中心
     zh-Hans:
       name: 费用中心
   menuData:
-    helpDocs: https://www.sealos.io/docs/cloud/apps/costcenter/
-    helpDropDown: false
-    nameColor: text-black
   name: Cost Center
   type: iframe
   displayType: normal

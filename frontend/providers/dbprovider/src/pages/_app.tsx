@@ -1,25 +1,25 @@
-import { useEffect, useState } from 'react';
-import Head from 'next/head';
-import type { AppProps } from 'next/app';
-import { ChakraProvider } from '@chakra-ui/react';
 import { theme } from '@/constants/theme';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import Router from 'next/router';
-import NProgress from 'nprogress'; //nprogress module
-import { sealosApp, createSealosApp } from 'sealos-desktop-sdk/app';
-import { EVENT_NAME } from 'sealos-desktop-sdk';
 import { useConfirm } from '@/hooks/useConfirm';
-import throttle from 'lodash/throttle';
-import { useGlobalStore } from '@/store/global';
 import { useLoading } from '@/hooks/useLoading';
-import { useRouter } from 'next/router';
-import { appWithTranslation, useTranslation } from 'next-i18next';
+import { useGlobalStore } from '@/store/global';
+import { getDBVersion, getUserPrice } from '@/store/static';
 import { getLangStore, setLangStore } from '@/utils/cookieUtils';
-import { getUserPrice, getDBVersion, StorageClassName, Domain, getEnv } from '@/store/static';
+import { ChakraProvider } from '@chakra-ui/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import throttle from 'lodash/throttle';
+import { appWithTranslation, useTranslation } from 'next-i18next';
+import type { AppProps } from 'next/app';
+import Head from 'next/head';
+import Router, { useRouter } from 'next/router';
+import NProgress from 'nprogress';
+import { useEffect, useState } from 'react';
+import { EVENT_NAME } from 'sealos-desktop-sdk';
+import { createSealosApp, sealosApp } from 'sealos-desktop-sdk/app';
+import useEnvStore from '@/store/env';
 
-import 'nprogress/nprogress.css';
-import 'react-day-picker/dist/style.css';
+import '@sealos/driver/src/driver.css';
 import '@/styles/reset.scss';
+import 'nprogress/nprogress.css';
 
 //Binding events.
 Router.events.on('routeChangeStart', () => NProgress.start());
@@ -40,37 +40,39 @@ const queryClient = new QueryClient({
 function App({ Component, pageProps }: AppProps) {
   const router = useRouter();
   const { i18n } = useTranslation();
+  const { SystemEnv, initSystemEnv } = useEnvStore();
   const { setScreenWidth, loading, setLastRoute } = useGlobalStore();
   const { Loading } = useLoading();
   const [refresh, setRefresh] = useState(false);
   const { openConfirm, ConfirmChild } = useConfirm({
-    title: '跳转提示',
-    content: '该应用不允许单独使用，点击确认前往 Sealos Desktop 使用。'
+    title: 'jump_prompt',
+    content: 'not_allow_standalone_use'
   });
 
   useEffect(() => {
-    NProgress.start();
     const response = createSealosApp();
-
     (async () => {
+      const { desktopDomain } = await initSystemEnv();
       try {
-        const res = await sealosApp.getSession();
-        localStorage.setItem('session', JSON.stringify(res));
+        const newSession = JSON.stringify(await sealosApp.getSession());
+        const oldSession = localStorage.getItem('session');
+        if (newSession && newSession !== oldSession) {
+          localStorage.setItem('session', newSession);
+          window.location.reload();
+        }
         console.log('app init success');
       } catch (err) {
         console.log('App is not running in desktop');
         if (!process.env.NEXT_PUBLIC_MOCK_USER) {
           localStorage.removeItem('session');
           openConfirm(() => {
-            window.open(`https://${Domain}`, '_self');
+            window.open(`https://${desktopDomain}`, '_self');
           })();
         }
       }
     })();
-    NProgress.done();
-
     return response;
-  }, [openConfirm]);
+  }, []);
 
   // add resize event
   useEffect(() => {
@@ -89,19 +91,19 @@ function App({ Component, pageProps }: AppProps) {
 
   // init
   useEffect(() => {
+    getUserPrice();
+    getDBVersion();
+
     const changeI18n = async (data: any) => {
       const lastLang = getLangStore();
       const newLang = data.currentLanguage;
-      if (lastLang !== newLang) {
-        i18n.changeLanguage(newLang);
+      if (lastLang !== newLang && typeof i18n?.changeLanguage === 'function') {
+        i18n?.changeLanguage(newLang);
         setLangStore(newLang);
         setRefresh((state) => !state);
       }
     };
 
-    getUserPrice();
-    getDBVersion();
-    getEnv();
     (async () => {
       try {
         const lang = await sealosApp.getLanguage();
@@ -116,6 +118,7 @@ function App({ Component, pageProps }: AppProps) {
     })();
 
     return sealosApp?.addAppEventListen(EVENT_NAME.CHANGE_I18N, changeI18n);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // record route
@@ -123,12 +126,42 @@ function App({ Component, pageProps }: AppProps) {
     return () => {
       setLastRoute(router.asPath);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router.pathname]);
 
   useEffect(() => {
-    const lang = getLangStore() || 'en';
+    const lang = getLangStore() || 'zh';
     i18n?.changeLanguage?.(lang);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refresh, router.asPath]);
+
+  useEffect(() => {
+    const setupInternalAppCallListener = async () => {
+      try {
+        const event = async (e: MessageEvent) => {
+          const whitelist = [`https://${SystemEnv.desktopDomain}`];
+          if (!whitelist.includes(e.origin)) {
+            return;
+          }
+          try {
+            if (e.data?.type === 'InternalAppCall' && e.data?.name) {
+              router.push({
+                pathname: '/redirect',
+                query: {
+                  name: e.data.name
+                }
+              });
+            }
+          } catch (error) {
+            console.log(error, 'error');
+          }
+        };
+        window.addEventListener('message', event);
+        return () => window.removeEventListener('message', event);
+      } catch (error) {}
+    };
+    setupInternalAppCallListener();
+  }, [SystemEnv.desktopDomain, router]);
 
   return (
     <>
@@ -140,6 +173,19 @@ function App({ Component, pageProps }: AppProps) {
       </Head>
       <QueryClientProvider client={queryClient}>
         <ChakraProvider theme={theme}>
+          {/* <button
+            onClick={() => {
+              const lastLang = getLangStore();
+              let lang = lastLang === 'en' ? 'zh' : 'en';
+              if (lastLang !== lang) {
+                i18n.changeLanguage(lang);
+                setLangStore(lang);
+                setRefresh((state) => !state);
+              }
+            }}
+          >
+            changeLanguage
+          </button> */}
           <Component {...pageProps} />
           <ConfirmChild />
           <Loading loading={loading} />

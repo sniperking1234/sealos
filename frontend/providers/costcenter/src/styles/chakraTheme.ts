@@ -1,5 +1,5 @@
 import { defineStyleConfig, extendTheme } from '@chakra-ui/react';
-
+import { theme as originTheme } from '@sealos/ui';
 const Button = defineStyleConfig({
   baseStyle: {
     borderRadius: '4px'
@@ -20,22 +20,34 @@ const Button = defineStyleConfig({
         }
       },
       color: '#FEFEFE'
-    },
-    switchPage: {
-      width: '24px',
-      height: '24px',
-      background: '#EDEFF1',
-
-      // '#EDEFF1':'#F1F4F6'
-      borderRadius: '9999px',
-      color: '#262A32',
-      flexGrow: '0',
-      _hover: {
-        opacity: '0.7'
+    }
+  }
+});
+const Tabs = defineStyleConfig({
+  variants: {
+    primary: {
+      tablist: {
+        // borderColor: '#EFF0F1',
+        alignItems: 'center',
+        border: 'unset',
+        gap: '12px',
+        fontWeight: '500'
       },
-      _disabled: {
-        color: '828289',
-        background: '#F1F4F6'
+      tab: {
+        fontWeight: '500',
+        fontSize: '16px',
+        px: '4px',
+        py: '8px',
+        borderBottom: '1.5px solid',
+        borderColor: 'transparent',
+        color: 'grayModern.500',
+        _selected: { color: 'grayModern.900', borderColor: 'grayModern.900' },
+        _active: {
+          color: 'unset'
+        }
+      },
+      tabpanels: {
+        mt: '12px'
       }
     }
   }
@@ -94,14 +106,14 @@ const Card = defineStyleConfig({
     }
   }
 });
-export const theme = extendTheme({
+export const theme = extendTheme(originTheme, {
   components: {
-    Button,
-    Input,
     Select,
     Heading,
-    Card
+    Card,
+    Tabs
   },
+  breakpoints: { base: '0em', sm: '30em', md: '48em', lg: '62em', xl: '80em', '2xl': '96em' },
   styles: {
     global: {
       'html, body': {
@@ -113,5 +125,11 @@ export const theme = extendTheme({
     '*': `'PingFang SC'`,
     div: `'PingFang SC'`,
     button: `'PingFang SC'`
+  },
+  colors: {
+    purple: {
+      100: '#F7E7FF',
+      600: '#9E53C1'
+    }
   }
 });

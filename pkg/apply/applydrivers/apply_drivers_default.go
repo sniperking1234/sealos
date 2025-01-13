@@ -19,14 +19,18 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/version"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/labring/sealos/pkg/apply/processor"
-	"github.com/labring/sealos/pkg/client-go/kubernetes"
 	"github.com/labring/sealos/pkg/clusterfile"
 	"github.com/labring/sealos/pkg/constants"
+	"github.com/labring/sealos/pkg/exec"
+	"github.com/labring/sealos/pkg/ssh"
+	"github.com/labring/sealos/pkg/system"
 	v2 "github.com/labring/sealos/pkg/types/v1beta1"
 	"github.com/labring/sealos/pkg/utils/confirm"
 	"github.com/labring/sealos/pkg/utils/iputils"
@@ -70,29 +74,25 @@ func NewDefaultScaleApplier(ctx context.Context, current, cluster *v2.Cluster) (
 
 type Applier struct {
 	context.Context
-	ClusterDesired     *v2.Cluster
-	ClusterCurrent     *v2.Cluster
-	ClusterFile        clusterfile.Interface
-	Client             kubernetes.Client
-	CurrentClusterInfo *version.Info
-	RunNewImages       []string
+	ClusterDesired *v2.Cluster
+	ClusterCurrent *v2.Cluster
+	ClusterFile    clusterfile.Interface
+	RunNewImages   []string
 }
 
 func (c *Applier) Apply() error {
-	clusterPath := constants.Clusterfile(c.ClusterDesired.Name)
 	// clusterErr and appErr should not appear in the same time
 	var clusterErr, appErr error
-	// save cluster to file after apply
 	defer func() {
-		switch clusterErr.(type) {
-		case *processor.CheckError, *processor.PreProcessError:
+		var checkError *processor.CheckError
+		var preProcessError *processor.PreProcessError
+		switch {
+		case errors.As(clusterErr, &checkError):
+			return
+		case errors.As(clusterErr, &preProcessError):
 			return
 		}
-		logger.Debug("save objects into local: %s, objects: %v", clusterPath, c.getWriteBackObjects())
-		saveErr := yaml.MarshalYamlToFile(clusterPath, c.getWriteBackObjects()...)
-		if saveErr != nil {
-			logger.Error("failed to serialize into file: %s error, %s", clusterPath, saveErr)
-		}
+		c.applyAfter()
 	}()
 	c.initStatus()
 	if c.ClusterCurrent == nil || c.ClusterCurrent.CreationTimestamp.IsZero() {
@@ -123,6 +123,11 @@ func (c *Applier) Apply() error {
 
 func (c *Applier) getWriteBackObjects() []interface{} {
 	obj := []interface{}{c.ClusterDesired}
+	if runtimeConfig := c.ClusterFile.GetRuntimeConfig(); runtimeConfig != nil {
+		if components := runtimeConfig.GetComponents(); len(components) > 0 {
+			obj = append(obj, components...)
+		}
+	}
 	if configs := c.ClusterFile.GetConfigs(); len(configs) > 0 {
 		for i := range configs {
 			obj = append(obj, configs[i])
@@ -166,7 +171,7 @@ func (c *Applier) updateStatus(clusterErr error, appErr error) {
 			cmdCondition = v2.NewFailedCommandCondition(appErr.Error())
 		}
 	} else if len(c.RunNewImages) > 0 {
-		cmdCondition = v2.NewSuccessCommandCondition()
+		return
 	}
 	cmdCondition.Images = c.RunNewImages
 	c.ClusterDesired.Status.CommandConditions = v2.UpdateCommandCondition(c.ClusterDesired.Status.CommandConditions, cmdCondition)
@@ -212,11 +217,7 @@ func (c *Applier) installApp(images []string) error {
 	if err != nil {
 		return err
 	}
-	err = installProcessor.Execute(c.ClusterDesired)
-	if err != nil {
-		return err
-	}
-	return nil
+	return installProcessor.Execute(c.ClusterDesired)
 }
 
 func (c *Applier) scaleCluster(mj, md, nj, nd []string) error {
@@ -227,7 +228,10 @@ func (c *Applier) scaleCluster(mj, md, nj, nd []string) error {
 	logger.Info("start to scale this cluster")
 	logger.Debug("current cluster: master %s, worker %s", c.ClusterCurrent.GetMasterIPAndPortList(), c.ClusterCurrent.GetNodeIPAndPortList())
 	logger.Debug("desired cluster: master %s, worker %s", c.ClusterDesired.GetMasterIPAndPortList(), c.ClusterDesired.GetNodeIPAndPortList())
-	scaleProcessor, err := processor.NewScaleProcessor(c.ClusterFile, c.ClusterDesired.Name, c.ClusterDesired.Spec.Image, mj, md, nj, nd)
+
+	localpath := constants.Clusterfile(c.ClusterDesired.Name)
+	cf := clusterfile.NewClusterFile(localpath)
+	scaleProcessor, err := processor.NewScaleProcessor(cf, c.ClusterDesired.Name, c.ClusterDesired.Spec.Image, mj, md, nj, nd)
 	if err != nil {
 		return err
 	}
@@ -247,7 +251,7 @@ func (c *Applier) Delete() error {
 		cfPath := constants.Clusterfile(c.ClusterDesired.Name)
 		target := fmt.Sprintf("%s.%d", cfPath, t.Unix())
 		logger.Debug("write reset cluster file to local: %s", target)
-		if err := yaml.MarshalYamlToFile(cfPath, c.getWriteBackObjects()...); err != nil {
+		if err := yaml.MarshalFile(cfPath, c.getWriteBackObjects()...); err != nil {
 			logger.Error("failed to store cluster file: %v", err)
 		}
 		_ = os.Rename(cfPath, target)
@@ -267,4 +271,51 @@ func (c *Applier) deleteCluster() error {
 
 	logger.Info("succeeded in deleting current cluster")
 	return nil
+}
+
+func (c *Applier) syncWorkdir() {
+	if v, _ := system.Get(system.SyncWorkDirEnvKey); v != "" {
+		vb, _ := strconv.ParseBool(v)
+		if !vb {
+			return
+		}
+	}
+	workDir := constants.ClusterDir(c.ClusterDesired.Name)
+	logger.Debug("sync workdir: %s", workDir)
+	ipList := c.ClusterDesired.GetMasterIPAndPortList()
+	execer, err := exec.New(ssh.NewCacheClientFromCluster(c.ClusterDesired, true))
+	if err != nil {
+		logger.Error("failed to create ssh client: %v", err)
+	}
+	eg, _ := errgroup.WithContext(context.Background())
+	for _, ipAddr := range ipList {
+		ip := ipAddr
+		eg.Go(func() error {
+			return execer.Copy(ip, workDir, workDir)
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		logger.Error("failed to sync workdir: %s error, %v", workDir, err)
+	}
+}
+
+// save cluster to file after apply
+func (c *Applier) saveClusterFile() {
+	clusterPath := constants.Clusterfile(c.ClusterDesired.Name)
+	objects := c.getWriteBackObjects()
+	if logger.IsDebugMode() {
+		out, err := yaml.MarshalConfigs(objects...)
+		if err == nil {
+			logger.Debug("save objects into local: %s, objects: %s", clusterPath, string(out))
+		}
+	}
+	saveErr := yaml.MarshalFile(clusterPath, objects...)
+	if saveErr != nil {
+		logger.Error("failed to serialize into file: %s error, %s", clusterPath, saveErr)
+	}
+}
+
+func (c *Applier) applyAfter() {
+	c.saveClusterFile()
+	c.syncWorkdir()
 }

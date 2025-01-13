@@ -19,22 +19,24 @@ package controllers
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
+
+	"github.com/labring/sealos/controllers/pkg/types"
+
+	v12 "github.com/labring/sealos/controllers/account/api/v1"
+	"github.com/labring/sealos/controllers/pkg/resources"
 
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 
 	"github.com/go-logr/logr"
-	v12 "github.com/labring/sealos/controllers/account/api/v1"
-	"github.com/labring/sealos/controllers/pkg/database"
-	v1 "github.com/labring/sealos/controllers/user/api/v1"
-	gonanoid "github.com/matoous/go-nanoid/v2"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+
+	"github.com/labring/sealos/controllers/pkg/database"
+	v1 "github.com/labring/sealos/controllers/user/api/v1"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -51,18 +53,17 @@ const BillingAnnotationLastUpdateTime = "account.sealos.io/last-update-time"
 // BillingReconciler reconciles a Billing object
 type BillingReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	mongoURI string
+	Scheme *runtime.Scheme
 	logr.Logger
-	AccountSystemNamespace string
+	DBClient   database.Account
+	AccountV2  database.AccountV2
+	Properties *resources.PropertyTypeLS
 }
 
 //+kubebuilder:rbac:groups=core,resources=namespaces,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=resourcequotas,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=account.sealos.io,resources=accountbalances,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=account.sealos.io,resources=accountbalances/status,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -75,18 +76,6 @@ type BillingReconciler struct {
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.11.2/pkg/reconcile
 func (r *BillingReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	r.Logger.V(1).Info("Reconcile Billing: ", "req.NamespacedName", req.NamespacedName)
-	dbCtx := context.Background()
-	dbClient, err := database.NewMongoDB(dbCtx, r.mongoURI)
-	if err != nil {
-		r.Logger.Error(err, "connect mongo client failed")
-		return ctrl.Result{Requeue: true}, err
-	}
-	defer func() {
-		err := dbClient.Disconnect(dbCtx)
-		if err != nil {
-			r.Logger.V(5).Info("disconnect mongo client failed", "err", err)
-		}
-	}()
 	ns := &corev1.Namespace{}
 	if err := r.Get(ctx, req.NamespacedName, ns); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
@@ -97,48 +86,20 @@ func (r *BillingReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, nil
 	}
 
-	own := ns.Annotations[v1.UserAnnotationCreatorKey]
-	if own == "" {
-		r.Logger.V(1).Info("billing namespace not found owner annotation", "namespace", ns.Name)
-		return ctrl.Result{}, nil
-	} else if own != getUsername(ns.Name) {
-		r.Logger.V(1).Info("billing namespace owner annotation not equal to namespace name", "namespace", ns.Name)
-		return ctrl.Result{}, nil
+	owner := ns.Labels[v1.UserLabelOwnerKey]
+	nsList, err := getOwnNsList(r.Client, owner)
+	if err != nil {
+		r.Logger.Error(err, "get own namespace list failed")
+		return ctrl.Result{Requeue: true}, err
 	}
-
-	nsListStr := make([]string, 0)
-	// list all annotation equals to "user.sealos.io/creator"
-	// TODO 后续使用索引annotation List
-	//nsList := &corev1.NamespaceList{}
-	//if err := r.List(ctx, nsList); err != nil {
-	//	return ctrl.Result{}, err
-	//}
-	//if err != nil {
-	//	r.Error(err, "Failed to list namespace")
-	//	return ctrl.Result{}, err
-	//}
-	//for _, namespace := range nsList.Items {
-	//	if namespace.Annotations[v1.UserAnnotationCreatorKey] != own {
-	//		continue
-	//	}
-	//	if err = r.syncResourceQuota(ctx, namespace.Name); err != nil {
-	//		r.Error(err, "Failed to syncResourceQuota")
-	//		return ctrl.Result{}, err
-	//	}
-	//	// sync limitrange
-	//	nsListStr = append(nsListStr, namespace.Name)
-	//
-	//}
-	nsListStr = append(nsListStr, ns.Name)
-	//if err = r.syncResourceQuota(ctx, ns.Name); err != nil {
-	//	r.Error(err, "Failed to syncResourceQuota")
-	//	return ctrl.Result{}, err
-	//}
-	//r.Logger.Info("syncResourceQuota success", "nsListStr", nsListStr)
+	r.Logger.V(1).Info("own namespace list", "own", owner, "nsList", nsList)
 	now := time.Now()
-	currentHourTime := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), 0, 0, 0, time.UTC)
+	currentHourTime := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), 0, 0, 0, time.Local).UTC()
 	queryTime := currentHourTime.Add(-1 * time.Hour)
-	if exist, lastUpdateTime, _ := dbClient.GetBillingLastUpdateTime(own, v12.Consumption); exist {
+
+	// TODO r.处理Unsettle状态的账单
+
+	if exist, lastUpdateTime, _ := r.DBClient.GetBillingLastUpdateTime(owner, v12.Consumption); exist {
 		if lastUpdateTime.Equal(currentHourTime) || lastUpdateTime.After(currentHourTime) {
 			return ctrl.Result{Requeue: true, RequeueAfter: time.Until(currentHourTime.Add(1*time.Hour + 10*time.Minute))}, nil
 		}
@@ -148,137 +109,76 @@ func (r *BillingReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 	}
 
+	orderList := []string{}
+	consumAmount := int64(0)
 	// 计算上次billing到当前的时间之间的整点，左开右闭
 	for t := queryTime.Truncate(time.Hour).Add(time.Hour); t.Before(currentHourTime) || t.Equal(currentHourTime); t = t.Add(time.Hour) {
-		if err = r.billingWithHourTime(ctx, t.UTC(), nsListStr, ns.Name, dbClient); err != nil {
-			r.Logger.Error(err, "billing with hour time failed", "time", t.Format(time.RFC3339))
-			return ctrl.Result{}, err
+		ids, amount, err := r.DBClient.GenerateBillingData(t.Add(-1*time.Hour), t, r.Properties, nsList, getUsername(owner))
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("generate billing data failed: %w", err)
 		}
+		orderList = append(orderList, ids...)
+		consumAmount += amount
+	}
+	if consumAmount > 0 {
+		if err := r.rechargeBalance(owner, consumAmount); err != nil {
+			for i := range orderList {
+				if err := r.DBClient.UpdateBillingStatus(orderList[i], resources.Unsettled); err != nil {
+					r.Logger.Error(err, "update billing status failed", "id", orderList[i])
+				}
+			}
+			return ctrl.Result{}, fmt.Errorf("recharge balance failed: %w", err)
+		}
+		r.Logger.V(1).Info("success recharge balance", "owner", owner, "amount", consumAmount)
 	}
 	return ctrl.Result{Requeue: true, RequeueAfter: time.Until(currentHourTime.Add(1*time.Hour + 10*time.Minute))}, nil
 }
 
-func (r *BillingReconciler) billingWithHourTime(ctx context.Context, queryTime time.Time, nsListStr []string, ownNs string, dbClient database.Interface) error {
-	r.Logger.Info("queryTime", "queryTime", queryTime.Format(time.RFC3339), "ownNs", ownNs, "nsListStr", nsListStr)
-	billing, err := dbClient.GetMeteringOwnerTimeResult(queryTime, nsListStr, nil, ownNs)
-	if err != nil {
-		return fmt.Errorf("get metering owner time result failed: %w", err)
+func (r *BillingReconciler) rechargeBalance(owner string, amount int64) (err error) {
+	if amount == 0 {
+		return nil
 	}
-	if billing != nil {
-		if billing.Amount != 0 {
-			id, err := gonanoid.New(12)
-			if err != nil {
-				return fmt.Errorf("create id failed: %w", err)
-			}
-			// create accountbalance
-			accountBalance := v12.AccountBalance{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      getUsername(ownNs) + "-" + queryTime.Format("20060102150405"),
-					Namespace: r.AccountSystemNamespace,
-				},
-				Spec: v12.AccountBalanceSpec{
-					OrderID: id,
-					Amount:  billing.Amount,
-					Costs:   billing.Costs,
-					Owner:   getUsername(ownNs),
-					Time:    metav1.Time{Time: queryTime},
-					Type:    v12.Consumption,
-				},
-			}
-			// ignore already exists error
-			if err := r.Create(ctx, &accountBalance); client.IgnoreAlreadyExists(err) != nil {
-				return fmt.Errorf("create accountbalance failed: %w", err)
-			}
-		} else {
-			r.Logger.Info("billing amount is zero", "billingResult", billing)
-		}
-	} else {
-		r.Logger.Info("billing is nil", "queryTime", queryTime.Format(time.RFC3339))
+	if err := r.AccountV2.AddDeductionBalance(&types.UserQueryOpts{Owner: owner}, amount); err != nil {
+		return fmt.Errorf("add balance failed: %w", err)
 	}
 	return nil
 }
 
-func (r *BillingReconciler) initDB() error {
-	dbCtx := context.Background()
-	mongoClient, err := database.NewMongoDB(dbCtx, r.mongoURI)
-	if err != nil {
-		r.Logger.Error(err, "connect mongo client failed")
-		return err
+func getOwnNsList(clt client.Client, user string) ([]string, error) {
+	nsList := &corev1.NamespaceList{}
+	if err := clt.List(context.Background(), nsList, client.MatchingLabels{v1.UserLabelOwnerKey: user}); err != nil {
+		return nil, fmt.Errorf("list namespace failed: %w", err)
 	}
-	defer func() {
-		err := mongoClient.Disconnect(dbCtx)
-		if err != nil {
-			r.Logger.V(5).Info("disconnect mongo client failed", "err", err)
-		}
-	}()
-	return mongoClient.CreateBillingIfNotExist()
+	nsListStr := make([]string, len(nsList.Items))
+	for i := range nsList.Items {
+		nsListStr[i] = nsList.Items[i].Name
+	}
+	return nsListStr, nil
 }
 
-//func (r *BillingReconciler) syncQueryRoleAndRoleBinding(ctx context.Context, name, namespace string) error {
-//	role := rbacV1.Role{
-//		ObjectMeta: metav1.ObjectMeta{
-//			Name:      "userQueryRole-" + name,
-//			Namespace: namespace,
-//		},
-//	}
-//	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, &role, func() error {
-//		role.Rules = []rbacV1.PolicyRule{
-//			{
-//				APIGroups: []string{"account.sealos.io"},
-//				Resources: []string{"billingrecordqueries"},
-//				Verbs:     []string{"create", "get", "watch", "list"},
-//			},
-//		}
-//		return nil
-//	}); err != nil {
-//		return fmt.Errorf("create role failed: %v,username: %v,namespace: %v", err, name, namespace)
-//	}
-//	roleBinding := rbacV1.RoleBinding{
-//		ObjectMeta: metav1.ObjectMeta{
-//			Name:      "userAccountRoleBinding-" + name,
-//			Namespace: namespace,
-//		},
-//	}
-//	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, &roleBinding, func() error {
-//		roleBinding.RoleRef = rbacV1.RoleRef{
-//			APIGroup: "rbac.authorization.k8s.io",
-//			Kind:     "Role",
-//			Name:     role.Name,
-//		}
-//		roleBinding.Subjects = helper.GetUsersSubject(name)
-//		return nil
-//	}); err != nil {
-//		return fmt.Errorf("create roleBinding failed: %v,rolename: %v,username: %v,ns: %v", err, role.Name, name, namespace)
-//	}
-//	return nil
-//}
+func (r *BillingReconciler) initDB() error {
+	return r.DBClient.CreateBillingIfNotExist()
+}
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *BillingReconciler) SetupWithManager(mgr ctrl.Manager, rateOpts controller.Options) error {
-	if r.mongoURI = os.Getenv(database.MongoURI); r.mongoURI == "" {
-		return fmt.Errorf("env %s is empty", database.MongoURI)
-	}
 	r.Logger = ctrl.Log.WithName("controller").WithName("Billing")
 	if err := r.initDB(); err != nil {
 		r.Logger.Error(err, "init db failed")
 	}
-	r.AccountSystemNamespace = os.Getenv(ACCOUNTNAMESPACEENV)
-	if r.AccountSystemNamespace == "" {
-		r.AccountSystemNamespace = DEFAULTACCOUNTNAMESPACE
-	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Namespace{}, builder.WithPredicates(predicate.Funcs{
 			CreateFunc: func(createEvent event.CreateEvent) bool {
-				_, ok := createEvent.Object.GetAnnotations()[v1.UserAnnotationCreatorKey]
-				return ok
+				own, ok := createEvent.Object.GetLabels()[v1.UserLabelOwnerKey]
+				return ok && getUsername(createEvent.Object.GetName()) == own
 			},
-			UpdateFunc: func(updateEvent event.UpdateEvent) bool {
+			UpdateFunc: func(_ event.UpdateEvent) bool {
 				return false
 			},
-			DeleteFunc: func(deleteEvent event.DeleteEvent) bool {
+			DeleteFunc: func(_ event.DeleteEvent) bool {
 				return false
 			},
-			GenericFunc: func(genericEvent event.GenericEvent) bool {
+			GenericFunc: func(_ event.GenericEvent) bool {
 				return false
 			},
 		})).

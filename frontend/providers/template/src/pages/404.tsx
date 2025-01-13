@@ -1,13 +1,13 @@
-import React, { useEffect } from 'react';
 import { useRouter } from 'next/router';
+import { useEffect } from 'react';
 
 const NonePage = () => {
   const router = useRouter();
   useEffect(() => {
-    router.push('/deploy');
+    router.push('/');
   }, [router]);
 
-  return <div></div>;
+  return null;
 };
 
 export default NonePage;

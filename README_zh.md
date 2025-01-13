@@ -1,7 +1,10 @@
 <h2 align="center">
 
-![](/docs/4.0/img/sealos-left-dark.png#gh-dark-mode-only)
-![](/docs/4.0/img/sealos-left.png#gh-light-mode-only)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./docs/4.0/img/sealos-left-dark.png" />
+  <source media="(prefers-color-scheme: light)" srcset="./docs/4.0/img/sealos-left.png" />
+  <img src="./docs/4.0/img/sealos-left.png" />
+</picture>
 
 一款以 Kubernetes 为内核的云操作系统发行版
 
@@ -14,8 +17,8 @@
 [![](https://img.shields.io/docker/pulls/labring/kubernetes)](https://hub.docker.com/r/labring/kubernetes)
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Flabring%2Fsealos.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Flabring%2Fsealos?ref=badge_shield)
 [![codecov](https://codecov.io/gh/labring/sealos/branch/main/graph/badge.svg?token=e41ZDcj06N)](https://codecov.io/gh/labring/sealos)
-[![Website](https://img.shields.io/website?url=https%3A%2F%2Fpostwoman.io&logo=Postwoman)](https://sealos.io)
-[![OSCS Status](https://www.oscs1024.com/platform/badge/labring/sealos.svg?size=small)](https://www.oscs1024.com/project/labring/sealos?ref=badge_small)
+[![Website](https://img.shields.io/website?url=https%3A%2F%2Fpostwoman.io&logo=Postwoman)](https://sealos.run)
+[![OSCS Status](https://www.oscs1024.com/platform/badge/labring/sealos.svg?size=small)](https://www.oscs1024.com/repo/labring/sealos?ref=badge_small)
 
 <br />
 
@@ -23,64 +26,66 @@
 
 </div>
 
-![](/docs/4.0/img/sealos-desktop.webp)
+https://github.com/user-attachments/assets/a7b7ed5c-0e31-4158-8a76-3b161ed70a70
 
-> [文档](https://www.sealos.io/docs/Intro) | [English](README.md) | [发展规划](https://github.com/orgs/labring/projects/4/views/9)
+<p align="center">
+  <a href="https://sealos.run/docs/Intro">文档</a> |
+  <a href="./README.md">English</a> | 
+  <a href="https://github.com/orgs/labring/projects/4/views/9">发展规划</a>
+</p>
 
 Sealos 是一款以 Kubernetes 为内核的**云操作系统发行版**。它以云原生的方式，抛弃了传统的云计算架构，转向以 Kubernetes 为云内核的新架构，使企业能够**像使用个人电脑一样**简单地使用云。
 
 
 ## 🚀 在 Sealos 上快速部署分布式应用
 
-[在线使用](https://cloud.sealos.io)
+[在线使用](https://cloud.sealos.run)
 
-* [在 Sealos 上 30 秒内轻松部署 Nginx](https://sealos.io/docs/quick-start/install-apps-with-app-launchpad)
-* [在 Sealos 上 30 秒启动 mysql/pgsql/mongo 高可用数据库](https://sealos.io/docs/quick-start/install-db-with-database)
-* [在 Sealos 上 运行 WordPress](https://sealos.io/docs/examples/blog-platform/install-wordpress)
-* [在 Sealos 上 运行 Uptime Kuma 拨测系统](https://sealos.io/docs/examples/dial-testing-system/install-uptime-kuma)
-* [在 Sealos 上 运行低代码平台](https://sealos.io/docs/category/low-code-platform)
-* [在 Sealos 上 运行搭建聊天应用](https://sealos.io/docs/examples/social-communication/install-tailchat)
+* [在 Sealos 上 30 秒内轻松部署 Nginx](https://sealos.run/docs/quick-start/use-app-launchpad)
+* [在 Sealos 上 30 秒启动 mysql/pgsql/mongo 高可用数据库](https://sealos.run/docs/quick-start/use-database)
+* [在 Sealos 上 运行 WordPress](https://sealos.run/docs/examples/blog-platform/install-wordpress)
+* [在 Sealos 上 运行 Uptime Kuma 拨测系统](https://sealos.run/docs/examples/dial-testing-system/install-uptime-kuma)
+* [在 Sealos 上 运行低代码平台](https://sealos.run/docs/category/low-code-platform)
+* [在 Sealos 上 运行搭建聊天应用](https://sealos.run/docs/examples/social-communication/install-tailchat)
 
-![](/docs/4.0/img/app-launchpad-zh.png)
+![](/docs/4.0/img/sealos-desktop-zh.webp)
 
-🔍 您可以通过以下的屏幕截图进一步了解 Sealos，关于 Sealos 更为详细的介绍与说明，请参阅 [什么是 Sealos](https://sealos.io/docs/Intro)。
+🔍 您可以通过以下的屏幕截图进一步了解 Sealos，关于 Sealos 更为详细的介绍与说明，请参阅 [什么是 Sealos](https://sealos.run/docs/Intro)。
 
 <div align="center">
 
-| 终端 | 应用管理 |
+| 模板市场 | 应用管理 |
 | :---: | :---: |
-| ![](/docs/4.0/img/terminal-zh.webp) | ![](/docs/4.0/img/app-launchpad-1-zh.webp) |
+| ![](/docs/4.0/img/templates-zh.jpg) | ![](/docs/4.0/img/app-launchpad-1-zh.jpg) |
 | 数据库管理 | 函数计算 |
-| ![](/docs/4.0/img/database-zh.webp) | ![](/docs/4.0/img/laf-zh.webp) |
+| ![](/docs/4.0/img/database-zh.jpg) | ![](/docs/4.0/img/laf-zh.jpg) |
 
 </div>
 
 ## 💡 核心功能
 
-✅ **登录即可使用 Kubernetes**：无需安装 Kubernetes 集群，Sealos 提供**多租户**在公网环境共享一个 Kubernetes 的能力。除此之外还提供了强隔离能力，以保障各个租户的数据安全。
+- 🚀 **应用管理**：在模板市场中轻松管理并快速发布可公网访问的分布式应用。
+- 🗄️ **数据库管理**：秒级创建高可用数据库，支持 MySQL、PostgreSQL、MongoDB 和 Redis。
+- 🌥️ **公私一致**：即是公有云也是私有云，支持传统应用无缝迁移到云环境。
 
-✅ **快速部署任意应用**：通过内置的应用管理，您可以在短时间内快速部署任意分布式应用。
+## 🌟 优势
 
-✅ **节省资源，降低开销**：只需为容器付费，自动伸缩功能从根本上解决了资源浪费的问题，可以节省10%～40%的成本。
-
-✅ **轻松实现公网访问**：为您的业务自动分配二级域名，帮助您轻松实现公网访问，同时还支持自定义域名绑定。
-
-✅ **高效数据库服务**：提供秒级创建高可用数据库的服务，使业务通过服务发现内网 DNS 能直接数据库。
-
-✅ **用户友好的操作体验**：内置终端直接支持命令行操作 Kubernetes 集群，同时支持部署 Kubernetes 管理界面，让您无论对云原生技术是否熟悉，都能在 Sealos 上拥有良好的使用体验。
+- 💰 **高效 & 经济**：仅需为容器付费，自动伸缩杜绝资源浪费，大幅度节省成本。
+- 🌐 **通用性强，无心智负担**：专注于业务本身，无需担心复杂性，几乎没有学习成本。
+- 🛡️ **灵活 & 安全**：多租户共享机制在确保安全的同时，实现资源隔离与高效协作。
 
 
 ## 🏘️ 社区与支持
 
-- 🌐 访问 [Sealos官网](https://sealos.io/) 获取完整的文档和实用链接。
+- 🌐 访问 [Sealos官网](https://sealos.run/) 获取完整的文档和实用链接。
 
 - 📱 扫码加入社区微信交流群👇
 
-  <img style="width: 250px;" src="/docs/4.0/img/sealos-qr-code.jpg">
+  <img style="width: 250px;" src="https://oss.laf.run/htr4n1-images/sealos-qr-code.jpg">
 
 - 💬 加入我们的 [Discord服务器](https://discord.gg/qzBmGGZGk7)，与 Sealos 开发者和终端用户进行交流。这是了解 Sealos 和 Kubernetes 以及提问和分享经验的理想之地。
 
-- 🐦 在 [Twitter](https://twitter.com/sealosio) 上关注我们。
+- 🐦 在 [Twitter](https://twitter.com/Sailos_io) 上关注我们。
 
 - 🐞 请将任何 Sealos 的 Bug、问题和需求提交到 [GitHub Issue](https://github.com/labring/sealos/issues/new/choose)。
 

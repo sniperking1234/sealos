@@ -29,6 +29,7 @@ import (
 	"github.com/labring/sealos/pkg/filesystem/rootfs"
 	"github.com/labring/sealos/pkg/guest"
 	"github.com/labring/sealos/pkg/runtime"
+	"github.com/labring/sealos/pkg/runtime/factory"
 	v2 "github.com/labring/sealos/pkg/types/v1beta1"
 	"github.com/labring/sealos/pkg/utils/logger"
 	"github.com/labring/sealos/pkg/utils/maps"
@@ -84,7 +85,7 @@ func (c *CreateProcessor) Check(cluster *v2.Cluster) error {
 	// the order doesn't matter
 	ips = append(ips, cluster.GetMasterIPAndPortList()...)
 	ips = append(ips, cluster.GetNodeIPAndPortList()...)
-	return NewCheckError(checker.RunCheckList([]checker.Interface{checker.NewIPsHostChecker(ips)}, cluster, checker.PhasePre))
+	return NewCheckError(checker.RunCheckList([]checker.Interface{checker.NewIPsHostChecker(ips), checker.NewContainerdChecker(ips)}, cluster, checker.PhasePre))
 }
 
 func (c *CreateProcessor) PreProcess(cluster *v2.Cluster) error {
@@ -96,15 +97,18 @@ func (c *CreateProcessor) preProcess(cluster *v2.Cluster) error {
 	if err := MountClusterImages(c.Buildah, cluster, false); err != nil {
 		return err
 	}
+	// env in cluster.spec will be merged into every mounts object
+	env := maps.FromSlice(cluster.Spec.Env)
 	// extra env must been set at the very first
 	for i := range cluster.Status.Mounts {
-		cluster.Status.Mounts[i].Env = maps.MergeMap(cluster.Status.Mounts[i].Env, c.ExtraEnvs)
+		cluster.Status.Mounts[i].Env = maps.Merge(cluster.Status.Mounts[i].Env, env, c.ExtraEnvs)
 	}
-	runTime, err := runtime.NewDefaultRuntime(cluster, c.ClusterFile.GetKubeadmConfig())
+
+	rt, err := factory.New(cluster, c.ClusterFile.GetRuntimeConfig())
 	if err != nil {
 		return fmt.Errorf("failed to init runtime, %v", err)
 	}
-	c.Runtime = runTime
+	c.Runtime = rt
 	return nil
 }
 
@@ -151,11 +155,7 @@ func (c *CreateProcessor) Init(_ *v2.Cluster) error {
 
 func (c *CreateProcessor) Join(cluster *v2.Cluster) error {
 	logger.Info("Executing pipeline Join in CreateProcessor.")
-	err := c.Runtime.JoinMasters(cluster.GetMasterIPAndPortList()[1:])
-	if err != nil {
-		return err
-	}
-	err = c.Runtime.JoinNodes(cluster.GetNodeIPAndPortList())
+	err := c.Runtime.ScaleUp(cluster.GetMasterIPAndPortList()[1:], cluster.GetNodeIPAndPortList())
 	if err != nil {
 		return err
 	}
@@ -163,7 +163,7 @@ func (c *CreateProcessor) Join(cluster *v2.Cluster) error {
 	if err != nil {
 		return err
 	}
-	return yaml.MarshalYamlToFile(constants.Clusterfile(cluster.Name), cluster)
+	return yaml.MarshalFile(constants.Clusterfile(cluster.Name), cluster)
 }
 
 func (c *CreateProcessor) RunGuest(cluster *v2.Cluster) error {
