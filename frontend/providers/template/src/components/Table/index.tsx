@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from 'react';
+import React from 'react';
 import { Box, BoxProps, Grid, Flex } from '@chakra-ui/react';
 import { useTranslation } from 'next-i18next';
 
@@ -10,9 +10,10 @@ interface Props extends BoxProps {
     render?: (item: any) => JSX.Element;
   }[];
   data: any[];
+  itemClass?: string;
 }
 
-const Table = ({ columns, data }: Props) => {
+const Table = ({ columns, data, itemClass = '' }: Props) => {
   const { t } = useTranslation();
   return (
     <Grid templateColumns={`repeat(${columns.length},1fr)`} overflowX={'auto'}>
@@ -25,13 +26,9 @@ const Table = ({ columns, data }: Props) => {
           key={item.key}
           color={'myGray.700'}
           whiteSpace={'nowrap'}
-          _first={{
-            borderLeftRadius: 'md',
-            pl: 7
-          }}
-          _last={{
-            borderRightRadius: 'md'
-          }}
+          borderLeftRadius={i === 0 ? 'md' : undefined}
+          pl={i === 0 ? '7' : ''}
+          borderRightRadius={i === columns.length - 1 ? 'md' : undefined}
         >
           {t(item.title)}
         </Box>
@@ -39,6 +36,8 @@ const Table = ({ columns, data }: Props) => {
       {data.map((item: any, index1) =>
         columns.map((col, index2) => (
           <Flex
+            className={index2 === 0 ? itemClass : ''}
+            data-id={item.id}
             key={col.key}
             alignItems={'center'}
             bg={'white'}
@@ -64,4 +63,4 @@ const Table = ({ columns, data }: Props) => {
   );
 };
 
-export default Table;
+export default React.memo(Table);

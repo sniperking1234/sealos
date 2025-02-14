@@ -155,11 +155,16 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 3. src/layout/index.tsx
 4. src/components/desktop_content.tsx
 
+### 测试环境
+
+1. 需要设置环境变量`NODE_ENV=test` 或者 `$env:NODE_ENV="test"`
+2. 先启动`pnpm dev`, 再启动`pnpm test:w`
+
 ### 其它
 
 1. 获取登录凭证: 由于 login 页面不是在 desktop 项目里，所以需要从线上 sealos 获取登录凭证到本地开发: <https://cloud.sealos.io/> 。复制 storage 里的 session 到 localhost 环境实现 mock 登录。
 
-2. Chakra ui <https://chakra-ui.com/getting-started>
+2. Chakra ui <https://v2.chakra-ui.com/getting-started>
 
 3. TanStack Query 用法：<https://cangsdarm.github.io/react-query-web-i18n/react>
 
@@ -192,39 +197,71 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 - 登录功能的开关, 部署时要用`true`配置想要使用的登录方式。
 
-    ```bash
-    WECHAT_ENABLED=true
-    GITHUB_ENABLED=true
-    PASSWORD_ENABLED=true
-    SMS_ENABLED=true
-    ```
+  ```
+  WECHAT_ENABLED=true
+  GITHUB_ENABLED=true
+  PASSWORD_ENABLED=true
+  SMS_ENABLED=true
+  RECHAGRE_ENABLED=true
+  ```
 
 - 每个登陆要配置的变量
+
   - wechat
 
-    ```bash
+    ```
     WECHAT_CLIENT_ID=
     WECHAT_CLIENT_SECRET=
-    ```  
+    WECHAT_ENABLED="true"
+    ```
 
   - github
 
-    ```bash
+    ```
     GITHUB_CLIENT_ID=
     GITHUB_CLIENT_SECRET=
+    GITHUB_ENABLED="true"
     ```
 
   - password
 
-    ```bash
+    ```
     PASSWORD_SALT=
+    PASSWROD_ENABLED="true"
     ```
 
   - sms
 
-    ```bash
+    ```
     ALI_ACCESS_KEY_ID=
     ALI_ACCESS_KEY_SECRET=
     ALI_SIGN_NAME=
     ALI_TEMPLATE_CODE=
+    SMS_ENABLED="true"
     ```
+
+  - google
+
+  ```
+  GOOGLE_ENABLED="true"
+  GOOGLE_CLIENT_ID=
+  GOOGLE_CLIENT_SECRET=
+  ```
+
+  - support standard oauth2
+
+  ```
+  OAUTH2_CLIENT_ID=
+  OAUTH2_CLIENT_SECRET=
+  OAUTH2_AUTH_URL=
+  OAUTH2_TOKEN_URL=
+  OAUTH2_USERINFO_URL=
+  ```
+
+  - number of teams and number of people in each team
+
+  ```
+  // default is '50'
+    TEAM_LIMIT="50"
+    TEAM_INVITE_LIMIT="50"
+  ```

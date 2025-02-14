@@ -18,13 +18,43 @@ package v1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/labring/sealos/controllers/pkg/common"
 )
 
 const (
-	ChargeStatusCharging      = "charging"
-	ChargeStatusClosed        = "closed"
-	ChargeStatusTimeOUT       = "timeout"
 	AccountSystemNamespaceEnv = "ACCOUNT_SYSTEM_NAMESPACE"
+)
+
+type (
+	Status string
+	Type   common.Type
+)
+
+const (
+	// Consumption 消费
+	Consumption common.Type = iota
+	//Subconsumption 子消费
+	SubConsumption
+
+	TransferIn
+	TransferOut
+	ActivityGiving
+)
+
+const QueryAllType Type = -1
+
+const (
+	Completed Status = "completed"
+	Create    Status = "create"
+	Failed    Status = "failed"
+)
+
+type Costs map[string]int64
+
+const (
+	Name  = "name"
+	Owner = "owner"
 )
 
 /*
@@ -66,6 +96,8 @@ type AccountStatus struct {
 	EncryptBalance *string `json:"encryptBalance,omitempty"`
 	// Recharge amount
 	Balance int64 `json:"balance,omitempty"`
+	// ActivityBonus: for demonstration purposes only and does not participate in calculation
+	ActivityBonus int64 `json:"activityBonus,omitempty"`
 	//Deduction amount
 	DeductionBalance int64 `json:"deductionBalance,omitempty"`
 	// EncryptDeductionBalance is to encrypt DeductionBalance

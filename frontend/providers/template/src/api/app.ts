@@ -1,4 +1,10 @@
-import { POST } from '@/services/request';
+import { GET, POST } from '@/services/request';
+import { TemplateSourceType } from '@/types/app';
 
-export const postDeployApp = (yamlList: string[]) => POST('/api/applyApp', { yamlList });
-export const getTemplate = (templateName: string) => POST('/api/getTemplate', { templateName });
+export const postDeployApp = (
+  yamlList: string[],
+  type: 'create' | 'replace' | 'dryrun' = 'create'
+) => POST('/api/applyApp', { yamlList, type });
+
+export const getTemplateSource = (templateName: string) =>
+  GET<TemplateSourceType>('/api/getTemplateSource', { templateName });

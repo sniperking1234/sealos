@@ -19,7 +19,17 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 	"time"
+
+	"k8s.io/utils/ptr"
+
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+
+	"github.com/minio/madmin-go/v3"
+
+	v1 "github.com/labring/sealos/controllers/account/api/v1"
 
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -29,27 +39,49 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/watch"
 
-	v1 "github.com/labring/sealos/controllers/account/api/v1"
+	objectstoragev1 "github/labring/sealos/controllers/objectstorage/api/v1"
+
+	kbv1alpha1 "github.com/apecloud/kubeblocks/apis/apps/v1alpha1"
 
 	"github.com/go-logr/logr"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const DebtLimit0Name = "debt-limit0"
-
 // NamespaceReconciler reconciles a Namespace object
 type NamespaceReconciler struct {
-	Client client.WithWatch
-	Log    logr.Logger
-	Scheme *runtime.Scheme
+	Client           client.WithWatch
+	Log              logr.Logger
+	Scheme           *runtime.Scheme
+	OSAdminClient    *madmin.AdminClient
+	OSNamespace      string
+	OSAdminSecret    string
+	InternalEndpoint string
 }
+
+const (
+	DebtLimit0Name        = "debt-limit0"
+	OSAccessKey           = "CONSOLE_ACCESS_KEY"
+	OSSecretKey           = "CONSOLE_SECRET_KEY"
+	Disabled              = "disabled"
+	Enabled               = "enabled"
+	OSInternalEndpointEnv = "OSInternalEndpoint"
+	OSNamespace           = "OSNamespace"
+	OSAdminSecret         = "OSAdminSecret"
+)
 
 //+kubebuilder:rbac:groups=core,resources=namespaces,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=namespaces/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=core,resources=namespaces/finalizers,verbs=update
+//+kubebuilder:rbac:groups=batch,resources=cronjobs,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=apps.kubeblocks.io,resources=clusters,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=apps.kubeblocks.io,resources=clusters/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=apps.kubeblocks.io,resources=opsrequests,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=apps.kubeblocks.io,resources=opsrequests/status,verbs=get;update;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -74,16 +106,14 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		logger.Error(fmt.Errorf("no debt status"), "no debt status")
 		return ctrl.Result{}, nil
 	}
-	logger.Info("debt status", "status", debtStatus)
+	logger.V(1).Info("debt status", "status", debtStatus)
 	switch debtStatus {
-	case v1.SuspendDebtNamespaceAnnoStatus:
-		logger.Info("suspend namespace resources")
+	case v1.SuspendDebtNamespaceAnnoStatus, v1.TerminateSuspendDebtNamespaceAnnoStatus:
 		if err := r.SuspendUserResource(ctx, req.NamespacedName.Name); err != nil {
 			logger.Error(err, "suspend namespace resources failed")
 			return ctrl.Result{}, err
 		}
 	case v1.ResumeDebtNamespaceAnnoStatus:
-		logger.Info("resume namespace resources")
 		if err := r.ResumeUserResource(ctx, req.NamespacedName.Name); err != nil {
 			logger.Error(err, "resume namespace resources failed")
 			return ctrl.Result{}, err
@@ -106,15 +136,17 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 }
 
 func (r *NamespaceReconciler) SuspendUserResource(ctx context.Context, namespace string) error {
+	// suspend kb cluster
 	// limit0 resource quota
 	// suspend pod: deploy pod && clone unmanaged pod
-	// delete infra cr
+	// suspend cronjob
 	pipelines := []func(context.Context, string) error{
+		r.suspendKBCluster,
 		r.suspendOrphanPod,
 		r.limitResourceQuotaCreate,
 		r.deleteControlledPod,
-		//TODO how to suspend infra cr or delete infra cr
-		//r.suspendInfraResources,
+		r.suspendCronJob,
+		r.suspendObjectStorage,
 	}
 	for _, fn := range pipelines {
 		if err := fn(ctx, namespace); err != nil {
@@ -130,6 +162,7 @@ func (r *NamespaceReconciler) ResumeUserResource(ctx context.Context, namespace 
 	pipelines := []func(context.Context, string) error{
 		r.limitResourceQuotaDelete,
 		r.resumePod,
+		r.resumeObjectStorage,
 	}
 	for _, fn := range pipelines {
 		if err := fn(ctx, namespace); err != nil {
@@ -163,6 +196,33 @@ func GetLimit0ResourceQuota(namespace string) *corev1.ResourceQuota {
 		corev1.ResourceRequestsStorage: resource.MustParse("0"),
 	}
 	return &quota
+}
+
+func (r *NamespaceReconciler) suspendKBCluster(ctx context.Context, namespace string) error {
+	kbClusterList := kbv1alpha1.ClusterList{}
+	if err := r.Client.List(ctx, &kbClusterList, client.InNamespace(namespace)); err != nil {
+		return err
+	}
+	for _, kbCluster := range kbClusterList.Items {
+		if kbCluster.Status.Phase == kbv1alpha1.StoppedClusterPhase || kbCluster.Status.Phase == kbv1alpha1.StoppingClusterPhase {
+			continue
+		}
+		ops := kbv1alpha1.OpsRequest{}
+		ops.Namespace = kbCluster.Namespace
+		ops.ObjectMeta.Name = "stop-" + kbCluster.Name + "-" + time.Now().Format("2006-01-02-15")
+		ops.Spec.TTLSecondsAfterSucceed = 1
+		abort := int32(60 * 60)
+		ops.Spec.TTLSecondsBeforeAbort = &abort
+		ops.Spec.ClusterRef = kbCluster.Name
+		ops.Spec.Type = "Stop"
+		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, &ops, func() error {
+			return nil
+		})
+		if err != nil {
+			r.Log.Error(err, "create ops request failed", "ops", ops.Name, "namespace", ops.Namespace)
+		}
+	}
+	return nil
 }
 
 func (r *NamespaceReconciler) suspendOrphanPod(ctx context.Context, namespace string) error {
@@ -267,7 +327,7 @@ func (r *NamespaceReconciler) resumePod(ctx context.Context, namespace string) e
 
 func (r *NamespaceReconciler) recreatePod(ctx context.Context, oldPod corev1.Pod, newPod *corev1.Pod) error {
 	list := corev1.PodList{}
-	watcher, err := r.Client.Watch(ctx, &list)
+	watcher, err := r.Client.Watch(ctx, &list, client.InNamespace(oldPod.Namespace))
 	if err != nil {
 		return fmt.Errorf("failed to start watch stream for pod %s: %w", oldPod.Name, err)
 	}
@@ -297,6 +357,77 @@ func (r *NamespaceReconciler) recreatePod(ctx context.Context, oldPod corev1.Pod
 	return nil
 }
 
+func (r *NamespaceReconciler) suspendObjectStorage(ctx context.Context, namespace string) error {
+	split := strings.Split(namespace, "-")
+	user := split[1]
+
+	err := r.setOSUserStatus(ctx, user, Disabled)
+	if err != nil {
+		r.Log.Error(err, "failed to suspend object storage", "user", user)
+		return err
+	}
+
+	//r.Log.Info("suspend object storage", "user", user)
+	return nil
+}
+
+func (r *NamespaceReconciler) resumeObjectStorage(ctx context.Context, namespace string) error {
+	split := strings.Split(namespace, "-")
+	user := split[1]
+
+	err := r.setOSUserStatus(ctx, user, Enabled)
+	if err != nil {
+		r.Log.Error(err, "failed to resume object storage", "user", user)
+		return err
+	}
+
+	//r.Log.Info("resume object storage", "user", user)
+	return nil
+}
+
+func (r *NamespaceReconciler) setOSUserStatus(ctx context.Context, user string, status string) error {
+	if r.InternalEndpoint == "" || r.OSNamespace == "" || r.OSAdminSecret == "" {
+		r.Log.V(1).Info("the endpoint or namespace or admin secret env of object storage is nil")
+		return nil
+	}
+
+	if r.OSAdminClient == nil {
+		secret := &corev1.Secret{}
+		if err := r.Client.Get(ctx, client.ObjectKey{Name: r.OSAdminSecret, Namespace: r.OSNamespace}, secret); err != nil {
+			r.Log.Error(err, "failed to get secret", "name", r.OSAdminSecret, "namespace", r.OSNamespace)
+			return err
+		}
+
+		accessKey := string(secret.Data[OSAccessKey])
+		secretKey := string(secret.Data[OSSecretKey])
+
+		oSAdminClient, err := objectstoragev1.NewOSAdminClient(r.InternalEndpoint, accessKey, secretKey)
+		if err != nil {
+			r.Log.Error(err, "failed to new object storage admin client")
+			return err
+		}
+		r.OSAdminClient = oSAdminClient
+	}
+
+	users, err := r.OSAdminClient.ListUsers(ctx)
+	if err != nil {
+		r.Log.Error(err, "failed to list minio user", "user", user)
+		return err
+	}
+
+	if _, ok := users[user]; !ok {
+		return nil
+	}
+
+	err = r.OSAdminClient.SetUserStatus(ctx, user, madmin.AccountStatus(status))
+	if err != nil {
+		r.Log.Error(err, "failed to set user status", "user", user, "status", status)
+		return err
+	}
+
+	return nil
+}
+
 //func (r *NamespaceReconciler) deleteInfraResources(ctx context.Context, namespace string) error {
 //
 //	u := unstructured.UnstructuredList{}
@@ -320,6 +451,15 @@ func (r *NamespaceReconciler) recreatePod(ctx context.Context, oldPod corev1.Pod
 // SetupWithManager sets up the controller with the Manager.
 func (r *NamespaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Log = ctrl.Log.WithName("controllers").WithName("Namespace")
+
+	r.OSAdminSecret = os.Getenv(OSAdminSecret)
+	r.InternalEndpoint = os.Getenv(OSInternalEndpointEnv)
+	r.OSNamespace = os.Getenv(OSNamespace)
+
+	if r.OSAdminSecret == "" || r.InternalEndpoint == "" || r.OSNamespace == "" {
+		r.Log.V(1).Info("failed to get the endpoint or namespace or admin secret env of object storage")
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Namespace{}, builder.WithPredicates(AnnotationChangedPredicate{})).
 		Complete(r)
@@ -348,4 +488,21 @@ func (AnnotationChangedPredicate) Update(e event.UpdateEvent) bool {
 func (AnnotationChangedPredicate) Create(e event.CreateEvent) bool {
 	_, ok := e.Object.GetAnnotations()[v1.DebtNamespaceAnnoStatusKey]
 	return ok
+}
+
+func (r *NamespaceReconciler) suspendCronJob(ctx context.Context, namespace string) error {
+	cronJobList := batchv1.CronJobList{}
+	if err := r.Client.List(ctx, &cronJobList, client.InNamespace(namespace)); err != nil {
+		return err
+	}
+	for _, cronJob := range cronJobList.Items {
+		if cronJob.Spec.Suspend != nil && *cronJob.Spec.Suspend {
+			continue
+		}
+		cronJob.Spec.Suspend = ptr.To(true)
+		if err := r.Client.Update(ctx, &cronJob); err != nil {
+			return fmt.Errorf("failed to suspend cronjob %s: %w", cronJob.Name, err)
+		}
+	}
+	return nil
 }

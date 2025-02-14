@@ -17,6 +17,7 @@ package processor
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"golang.org/x/sync/errgroup"
@@ -27,12 +28,14 @@ import (
 	"github.com/labring/sealos/pkg/config"
 	"github.com/labring/sealos/pkg/filesystem/rootfs"
 	"github.com/labring/sealos/pkg/guest"
-	runtime "github.com/labring/sealos/pkg/runtime"
+	"github.com/labring/sealos/pkg/runtime"
+	"github.com/labring/sealos/pkg/runtime/factory"
 	v2 "github.com/labring/sealos/pkg/types/v1beta1"
 	"github.com/labring/sealos/pkg/utils/confirm"
 	"github.com/labring/sealos/pkg/utils/logger"
 	"github.com/labring/sealos/pkg/utils/maps"
 	"github.com/labring/sealos/pkg/utils/rand"
+	stringsutil "github.com/labring/sealos/pkg/utils/strings"
 )
 
 var ForceOverride bool
@@ -133,24 +136,43 @@ func (c *InstallProcessor) PreProcess(cluster *v2.Cluster) error {
 			return err
 		}
 		if oci.OCIv1.Config.Labels != nil {
-			imageTypes.Insert(oci.OCIv1.Config.Labels[v2.ImageTypeKey])
+			imageTypes.Insert(maps.GetFromKeys(oci.OCIv1.Config.Labels, v2.ImageTypeKeys...))
 		} else {
 			imageTypes.Insert(string(v2.AppImage))
 		}
 	}
+	// This code ensures that `mount` always contains the latest `MountImage` instances from `cluster.Status.Mounts`
+	// and that each `ImageName` is represented by only one corresponding instance in `mounts`.
+	mountIndexes := make(map[string]int)
+	for i := range cluster.Status.Mounts {
+		mountIndexes[cluster.Status.Mounts[i].ImageName] = i
+	}
+
+	indexes := make([]int, 0)
+	for i := range mountIndexes {
+		indexes = append(indexes, mountIndexes[i])
+	}
+	sort.Ints(indexes)
+	mounts := make([]v2.MountImage, 0)
+	for i := range indexes {
+		mounts = append(mounts, cluster.Status.Mounts[i])
+	}
+	cluster.Status.Mounts = mounts
+
 	for _, img := range c.NewImages {
+		index, mount := cluster.FindImage(img)
 		var ctrName string
-		mount := cluster.FindImage(img)
 		if mount != nil {
 			if !ForceOverride {
 				continue
 			}
-			ctrName = mount.Name
 			logger.Debug("trying to override app %s", img)
-		} else {
-			ctrName = rand.Generator(8)
+			if err := c.Buildah.Delete(mount.Name); err != nil {
+				return err
+			}
 		}
-		cluster.Spec.Image = merge(cluster.Spec.Image, img)
+		ctrName = rand.Generator(8)
+		cluster.Spec.Image = stringsutil.Merge(cluster.Spec.Image, img)
 		bderInfo, err := c.Buildah.Create(ctrName, img)
 		if err != nil {
 			return err
@@ -164,16 +186,20 @@ func (c *InstallProcessor) PreProcess(cluster *v2.Cluster) error {
 		if err = OCIToImageMount(c.Buildah, mount); err != nil {
 			return err
 		}
-		mount.Env = maps.MergeMap(mount.Env, c.ExtraEnvs)
-
-		cluster.SetMountImage(mount)
+		mount.Env = maps.Merge(mount.Env, c.ExtraEnvs)
+		// This code ensures that `cluster.Status.Mounts` always contains the latest `MountImage` instances
+		if index >= 0 {
+			cluster.Status.Mounts = append(cluster.Status.Mounts[:index], cluster.Status.Mounts[index+1:]...)
+		}
+		cluster.Status.Mounts = append(cluster.Status.Mounts, *mount)
 		c.NewMounts = append(c.NewMounts, *mount)
 	}
-	runtime, err := runtime.NewDefaultRuntime(cluster, c.ClusterFile.GetKubeadmConfig())
+
+	rt, err := factory.New(cluster, c.ClusterFile.GetRuntimeConfig())
 	if err != nil {
 		return fmt.Errorf("failed to init runtime, %v", err)
 	}
-	c.Runtime = runtime
+	c.Runtime = rt
 	return nil
 }
 
@@ -184,7 +210,7 @@ func (c *InstallProcessor) UpgradeIfNeed(cluster *v2.Cluster) error {
 		if version == "" {
 			continue
 		}
-		err := c.Runtime.UpgradeCluster(version)
+		err := c.Runtime.Upgrade(version)
 		if err != nil {
 			logger.Error("upgrade cluster failed")
 			return err
@@ -193,17 +219,6 @@ func (c *InstallProcessor) UpgradeIfNeed(cluster *v2.Cluster) error {
 		cluster.ReplaceRootfsImage()
 	}
 	return nil
-}
-
-func merge(ss []string, s string) []string {
-	var ret []string
-	for i := range ss {
-		if ss[i] != s {
-			ret = append(ret, ss[i])
-		}
-	}
-	ret = append(ret, s)
-	return ret
 }
 
 func (c *InstallProcessor) PostProcess(*v2.Cluster) error {

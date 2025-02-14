@@ -28,12 +28,9 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-
-	jwt "github.com/golang-jwt/jwt/v4"
-	v1 "github.com/labring/sealos/controllers/licenseissuer/api/v1"
 )
 
-const defaultEncryptionKey = "0123456789ABCDEF0123456789ABCDEF"
+const defaultEncryptionKey = "Bg1c3Dd5e9e0F84bdF0A5887cF43aB63"
 
 var encryptionKey = defaultEncryptionKey
 
@@ -82,43 +79,6 @@ func DecryptInt64(in string) (int64, error) {
 	return strconv.ParseInt(string(out), 10, 64)
 }
 
-// DecryptInt64WithKey decrypts the given ciphertext using AES-GCM.
-func DecryptInt64WithKey(in string, encryptionKey []byte) (int64, error) {
-	out, err := DecryptWithKey(in, encryptionKey)
-	if err != nil {
-		return 0, fmt.Errorf("failed to decrpt balance: %w", err)
-	}
-	return strconv.ParseInt(string(out), 10, 64)
-}
-
-func RechargeBalance(rawBalance *string, amount int64) error {
-	balanceInt, err := DecryptInt64(*rawBalance)
-	if err != nil {
-		return fmt.Errorf("failed to recharge balance: %w", err)
-	}
-	balanceInt += amount
-	encryptBalance, err := EncryptInt64(balanceInt)
-	if err != nil {
-		return fmt.Errorf("failed to recharge balance: %w", err)
-	}
-	*rawBalance = *encryptBalance
-	return nil
-}
-
-func DeductBalance(balance *string, amount int64) error {
-	balanceInt, err := DecryptInt64(*balance)
-	if err != nil {
-		return fmt.Errorf("failed to deduct balance: %w", err)
-	}
-	balanceInt -= amount
-	encryptBalance, err := EncryptInt64(balanceInt)
-	if err != nil {
-		return fmt.Errorf("failed to deduct balance: %w", err)
-	}
-	*balance = *encryptBalance
-	return nil
-}
-
 // Decrypt decrypts the given ciphertext using AES-GCM.
 func Decrypt(ciphertextBase64 string) ([]byte, error) {
 	return DecryptWithKey(ciphertextBase64, []byte(encryptionKey))
@@ -155,32 +115,7 @@ func DecryptWithKey(ciphertextBase64 string, encryptionKey []byte) ([]byte, erro
 	return plaintext, nil
 }
 
-func IsLicenseValid(license v1.License) (map[string]interface{}, bool) {
-	decodeKey, err := base64.StdEncoding.DecodeString(license.Spec.Key)
-	if err != nil {
-		return nil, false
-	}
-	publicKey, err := parseRSAPublicKeyFromPEM(string(decodeKey))
-	//fmt.Println(string(decodeKey))
-	if err != nil {
-		return nil, false
-	}
-	keyFunc := func(token *jwt.Token) (interface{}, error) {
-		return publicKey, nil
-	}
-	parsedToken, err := jwt.Parse(license.Spec.Token, keyFunc)
-	if err != nil {
-		return nil, false
-	}
-
-	claims, ok := parsedToken.Claims.(jwt.MapClaims)
-	if ok && parsedToken.Valid {
-		return claims, ok
-	}
-	return nil, false
-}
-
-func parseRSAPublicKeyFromPEM(keyPEM string) (*rsa.PublicKey, error) {
+func ParseRSAPublicKeyFromPEM(keyPEM string) (*rsa.PublicKey, error) {
 	block, _ := pem.Decode([]byte(keyPEM))
 	if block == nil {
 		return nil, errors.New("failed to parse PEM block containing the public key")

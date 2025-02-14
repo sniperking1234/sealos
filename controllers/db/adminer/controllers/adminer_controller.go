@@ -21,7 +21,6 @@ import (
 	"os"
 	"time"
 
-	apisix "github.com/apache/apisix-ingress-controller/pkg/kube/apisix/apis/config/v2beta3"
 	"github.com/jaevor/go-nanoid"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -38,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	adminerv1 "github.com/labring/sealos/controllers/db/adminer/api/v1"
+	"github.com/labring/sealos/controllers/pkg/utils/label"
 )
 
 const (
@@ -50,10 +50,14 @@ const (
 )
 
 const (
+	AdminerPartOf = "adminer"
+)
+
+const (
 	DefaultDomain          = "cloud.sealos.io"
 	DefaultSecretName      = "wildcard-cloud-sealos-io-cert"
 	DefaultSecretNamespace = "sealos-system"
-	DefaultImage           = "docker.io/labring/docker-adminer:v4.8.1"
+	DefaultImage           = "docker.io/labring4docker/adminer:v4.8.1"
 )
 
 var (
@@ -89,12 +93,6 @@ type AdminerReconciler struct {
 //+kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
-
-// No needed for now
-//-kubebuilder:rbac:groups=apisix.apache.org,resources=apisixroutes,verbs=get;list;watch;create;update;patch;delete
-//-kubebuilder:rbac:groups=apisix.apache.org,resources=apisixtlses,verbs=get;list;watch;create;update;patch;delete
-//-kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;list;watch;create;update;patch;delete
-//-kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
 
 //-kubebuilder:rbac:groups=core,resources=endpoints,verbs=get;list;watch
 
@@ -141,26 +139,32 @@ func (r *AdminerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, nil
 	}
 
-	if err := r.syncSecret(ctx, adminer); err != nil {
+	recLabels := label.RecommendedLabels(&label.Recommended{
+		Name:      adminer.Name,
+		ManagedBy: label.DefaultManagedBy,
+		PartOf:    AdminerPartOf,
+	})
+
+	if err := r.syncSecret(ctx, adminer, recLabels); err != nil {
 		logger.Error(err, "create secret failed")
 		r.recorder.Eventf(adminer, corev1.EventTypeWarning, "Create secret failed", "%v", err)
 		return ctrl.Result{}, err
 	}
 
 	var hostname string
-	if err := r.syncDeployment(ctx, adminer, &hostname); err != nil {
+	if err := r.syncDeployment(ctx, adminer, &hostname, recLabels); err != nil {
 		logger.Error(err, "create deployment failed")
 		r.recorder.Eventf(adminer, corev1.EventTypeWarning, "Create deployment failed", "%v", err)
 		return ctrl.Result{}, err
 	}
 
-	if err := r.syncService(ctx, adminer); err != nil {
+	if err := r.syncService(ctx, adminer, recLabels); err != nil {
 		logger.Error(err, "create service failed")
 		r.recorder.Eventf(adminer, corev1.EventTypeWarning, "Create service failed", "%v", err)
 		return ctrl.Result{}, err
 	}
 
-	if err := r.syncIngress(ctx, adminer, hostname); err != nil {
+	if err := r.syncIngress(ctx, adminer, hostname, recLabels); err != nil {
 		logger.Error(err, "create ingress failed")
 		r.recorder.Eventf(adminer, corev1.EventTypeWarning, "Create ingress failed", "%v", err)
 		return ctrl.Result{}, err
@@ -205,11 +209,12 @@ func (r *AdminerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 // 	})
 // }
 
-func (r *AdminerReconciler) syncSecret(ctx context.Context, adminer *adminerv1.Adminer) error {
+func (r *AdminerReconciler) syncSecret(ctx context.Context, adminer *adminerv1.Adminer, recLabels map[string]string) error {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      adminer.Name,
 			Namespace: adminer.Namespace,
+			Labels:    recLabels,
 		},
 	}
 
@@ -224,20 +229,19 @@ func (r *AdminerReconciler) syncSecret(ctx context.Context, adminer *adminerv1.A
 	return nil
 }
 
-func (r *AdminerReconciler) syncDeployment(ctx context.Context, adminer *adminerv1.Adminer, hostname *string) error {
-	labelsMap := buildLabelsMap(adminer)
-
+func (r *AdminerReconciler) syncDeployment(ctx context.Context, adminer *adminerv1.Adminer, hostname *string, recLabels map[string]string) error {
 	objectMeta := metav1.ObjectMeta{
 		Name:      adminer.Name,
 		Namespace: adminer.Namespace,
+		Labels:    recLabels,
 	}
 
 	selector := &metav1.LabelSelector{
-		MatchLabels: labelsMap,
+		MatchLabels: recLabels,
 	}
 
 	templateObjMeta := metav1.ObjectMeta{
-		Labels: labelsMap,
+		Labels: recLabels,
 	}
 
 	containers := []corev1.Container{
@@ -376,19 +380,12 @@ func (r *AdminerReconciler) syncDeployment(ctx context.Context, adminer *adminer
 	return r.Status().Update(ctx, adminer)
 }
 
-func (r *AdminerReconciler) syncService(ctx context.Context, adminer *adminerv1.Adminer) error {
-	labelsMap := buildLabelsMap(adminer)
-	expectService := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      adminer.Name,
-			Namespace: adminer.Namespace,
-		},
-		Spec: corev1.ServiceSpec{
-			Selector: labelsMap,
-			Type:     corev1.ServiceTypeClusterIP,
-			Ports: []corev1.ServicePort{
-				{Name: "adminer", Port: 8080, TargetPort: intstr.FromInt(8080), Protocol: corev1.ProtocolTCP},
-			},
+func (r *AdminerReconciler) syncService(ctx context.Context, adminer *adminerv1.Adminer, recLabels map[string]string) error {
+	expectServiceSpec := corev1.ServiceSpec{
+		Selector: recLabels,
+		Type:     corev1.ServiceTypeClusterIP,
+		Ports: []corev1.ServicePort{
+			{Name: "adminer", Port: 8080, TargetPort: intstr.FromInt(8080), Protocol: corev1.ProtocolTCP},
 		},
 	}
 
@@ -396,20 +393,21 @@ func (r *AdminerReconciler) syncService(ctx context.Context, adminer *adminerv1.
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      adminer.Name,
 			Namespace: adminer.Namespace,
+			Labels:    recLabels,
 		},
 	}
 
 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, service, func() error {
 		// only update some specific fields
-		service.Spec.Selector = expectService.Spec.Selector
-		service.Spec.Type = expectService.Spec.Type
+		service.Spec.Selector = expectServiceSpec.Selector
+		service.Spec.Type = expectServiceSpec.Type
 		if len(service.Spec.Ports) == 0 {
-			service.Spec.Ports = expectService.Spec.Ports
+			service.Spec.Ports = expectServiceSpec.Ports
 		} else {
-			service.Spec.Ports[0].Name = expectService.Spec.Ports[0].Name
-			service.Spec.Ports[0].Port = expectService.Spec.Ports[0].Port
-			service.Spec.Ports[0].TargetPort = expectService.Spec.Ports[0].TargetPort
-			service.Spec.Ports[0].Protocol = expectService.Spec.Ports[0].Protocol
+			service.Spec.Ports[0].Name = expectServiceSpec.Ports[0].Name
+			service.Spec.Ports[0].Port = expectServiceSpec.Ports[0].Port
+			service.Spec.Ports[0].TargetPort = expectServiceSpec.Ports[0].TargetPort
+			service.Spec.Ports[0].Protocol = expectServiceSpec.Ports[0].Protocol
 		}
 		return controllerutil.SetControllerReference(adminer, service, r.Scheme)
 	}); err != nil {
@@ -418,94 +416,32 @@ func (r *AdminerReconciler) syncService(ctx context.Context, adminer *adminerv1.
 	return nil
 }
 
-func (r *AdminerReconciler) syncIngress(ctx context.Context, adminer *adminerv1.Adminer, hostname string) error {
+func (r *AdminerReconciler) syncIngress(ctx context.Context, adminer *adminerv1.Adminer, hostname string, recLabels map[string]string) error {
 	var err error
 	host := hostname + "." + r.adminerDomain
 	switch adminer.Spec.IngressType {
 	case adminerv1.Nginx:
-		err = r.syncNginxIngress(ctx, adminer, host)
-	case adminerv1.Apisix:
-		err = r.syncApisixIngress(ctx, adminer, host)
+		err = r.syncNginxIngress(ctx, adminer, host, recLabels)
 	}
 	return err
 }
 
-func (r *AdminerReconciler) syncNginxIngress(ctx context.Context, adminer *adminerv1.Adminer, host string) error {
+func (r *AdminerReconciler) syncNginxIngress(ctx context.Context, adminer *adminerv1.Adminer, host string, recLabels map[string]string) error {
 	ingress := &networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      adminer.Name,
 			Namespace: adminer.Namespace,
+			Labels:    recLabels,
 		},
 	}
 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, ingress, func() error {
 		expectIngress := r.createNginxIngress(adminer, host)
-		ingress.ObjectMeta.Labels = expectIngress.ObjectMeta.Labels
 		ingress.ObjectMeta.Annotations = expectIngress.ObjectMeta.Annotations
 		ingress.Spec.Rules = expectIngress.Spec.Rules
 		ingress.Spec.TLS = expectIngress.Spec.TLS
 		return controllerutil.SetControllerReference(adminer, ingress, r.Scheme)
 	}); err != nil {
 		return err
-	}
-
-	protocol := protocolHTTPS
-	if !r.tlsEnabled {
-		protocol = protocolHTTP
-	}
-
-	domain := protocol + host
-	if adminer.Status.Domain != domain {
-		adminer.Status.Domain = domain
-		return r.Status().Update(ctx, adminer)
-	}
-
-	return nil
-}
-
-func (r *AdminerReconciler) syncApisixIngress(ctx context.Context, adminer *adminerv1.Adminer, host string) error {
-	// 1. sync ApisixRoute
-	apisixRoute := &apisix.ApisixRoute{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      adminer.Name,
-			Namespace: adminer.Namespace,
-		},
-	}
-	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, apisixRoute, func() error {
-		expectRoute := r.createApisixRoute(adminer, host)
-		if len(apisixRoute.Spec.HTTP) == 0 {
-			apisixRoute.Spec.HTTP = expectRoute.Spec.HTTP
-		} else {
-			apisixRoute.Spec.HTTP[0].Name = expectRoute.Spec.HTTP[0].Name
-			apisixRoute.Spec.HTTP[0].Match = expectRoute.Spec.HTTP[0].Match
-			apisixRoute.Spec.HTTP[0].Backends = expectRoute.Spec.HTTP[0].Backends
-			apisixRoute.Spec.HTTP[0].Timeout = expectRoute.Spec.HTTP[0].Timeout
-			apisixRoute.Spec.HTTP[0].Authentication = expectRoute.Spec.HTTP[0].Authentication
-		}
-		return controllerutil.SetControllerReference(adminer, apisixRoute, r.Scheme)
-	}); err != nil {
-		return err
-	}
-
-	// 2. sync ApisixTls
-	if r.tlsEnabled {
-		apisixTLS := &apisix.ApisixTls{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      adminer.Name,
-				Namespace: adminer.Namespace,
-			},
-		}
-		if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, apisixTLS, func() error {
-			expectTLS := r.createApisixTLS(adminer, host)
-			if apisixTLS.Spec != nil {
-				apisixTLS.Spec.Hosts = expectTLS.Spec.Hosts
-				apisixTLS.Spec.Secret = expectTLS.Spec.Secret
-			} else {
-				apisixTLS.Spec = expectTLS.Spec
-			}
-			return controllerutil.SetControllerReference(adminer, apisixTLS, r.Scheme)
-		}); err != nil {
-			return err
-		}
 	}
 
 	protocol := protocolHTTPS
@@ -548,13 +484,6 @@ func isExpired(adminer *adminerv1.Adminer) bool {
 
 	duration, _ := time.ParseDuration(adminer.Spec.Keepalived)
 	return lastUpdateTime.Add(duration).Before(time.Now())
-}
-
-func buildLabelsMap(adminer *adminerv1.Adminer) map[string]string {
-	labelsMap := map[string]string{
-		"AdminerID": adminer.Name,
-	}
-	return labelsMap
 }
 
 func getDomain() string {

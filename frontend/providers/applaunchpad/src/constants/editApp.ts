@@ -1,4 +1,6 @@
 import type { AppEditType } from '@/types/app';
+import { customAlphabet } from 'nanoid';
+const nanoid = customAlphabet('abcdefghijklmnopqrstuvwxyz', 12);
 
 export const editModeMap = (isEdit: boolean) => {
   if (isEdit) {
@@ -13,7 +15,7 @@ export const editModeMap = (isEdit: boolean) => {
 
   return {
     title: 'Application Deployment',
-    applyBtnText: 'Deploy',
+    applyBtnText: 'Deploy Application',
     applyMessage: 'Confirm Deploy Application?',
     applySuccess: 'Deployment Successful',
     applyError: 'Deployment Failed'
@@ -21,20 +23,26 @@ export const editModeMap = (isEdit: boolean) => {
 };
 
 export const defaultEditVal: AppEditType = {
+  kind: 'deployment',
   appName: 'hello-world',
   imageName: 'nginx',
   runCMD: '',
   cmdParam: '',
   replicas: 1,
-  cpu: 100,
-  memory: 64,
-  containerOutPort: 80,
-  accessExternal: {
-    use: false,
-    backendProtocol: 'HTTP',
-    outDomain: '',
-    selfDomain: ''
-  },
+  cpu: 200,
+  memory: 256,
+  networks: [
+    {
+      networkName: '',
+      portName: nanoid(),
+      port: 80,
+      protocol: 'HTTP',
+      openPublicDomain: false,
+      publicDomain: '',
+      customDomain: '',
+      domain: ''
+    }
+  ],
   envs: [],
   hpa: {
     use: false,
@@ -51,11 +59,14 @@ export const defaultEditVal: AppEditType = {
     serverAddress: 'docker.io'
   },
   storeList: [],
+  volumes: [],
+  volumeMounts: [],
   gpu: {
     manufacturers: 'nvidia',
     type: '',
     amount: 1
-  }
+  },
+  labels: {}
 };
 
 export const GpuAmountMarkList = [
