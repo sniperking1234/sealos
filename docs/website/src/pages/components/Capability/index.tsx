@@ -1,39 +1,42 @@
-import React, { useLayoutEffect } from 'react'
-import CometIcon from '../Comet'
-import ApplaunchpadIcon from '@site/static/icons/applaunchpad.svg'
-import ServerlessIcon from '@site/static/icons/serverless.svg'
-import DataBaseIcon from '@site/static/icons/database.svg'
-import useIsBrowser from '@docusaurus/useIsBrowser'
-import './index.scss'
-import Translate from '@docusaurus/Translate'
+import Translate from '@docusaurus/Translate';
+import useIsBrowser from '@docusaurus/useIsBrowser';
+import useWindow from '@site/src/hooks/useWindow';
+import ApplaunchpadIcon from '@site/static/icons/applaunchpad.svg';
+import DataBaseIcon from '@site/static/icons/database.svg';
+import ServerlessIcon from '@site/static/icons/serverless.svg';
+import React, { useLayoutEffect } from 'react';
+import CometIcon from '../Comet';
+import './index.scss';
 
 const i18nObj = {
   capability: <Translate>The Capabilities of Sealos</Translate>,
   appMan: <Translate>Application Management</Translate>,
   appManagement_introduce: (
     <Translate>
-      Rapidly deploy any distributed application with the ability to access the
-      public network.
+      Easy management and quick release of publicly accessible distributed applications in the app
+      store.
     </Translate>
   ),
   database: <Translate>Database</Translate>,
   database_introduce: (
     <Translate>
-      Create highly available databases in seconds that support MySQL,
-      PostgreSQL, MongoDB, and Redis.
+      Create high-availability databases in seconds, offering support for MySQL, PostgreSQL,
+      MongoDB, and Redis.
     </Translate>
   ),
-  serverless: <Translate>Serverless</Translate>,
+  serverless: <Translate>Cloud Universality</Translate>,
   serverless_introduce: (
     <Translate>
-      Serverless computing makes writing code as easy as blogging, allowing you
-      to launch and deploy your business code anytime, anywhere.
+      Equally effective in both public and private cloud, enabling a seamless transition of
+      traditional applications to the cloud.
     </Translate>
   ),
-}
+  Explore: <Translate>Explore</Translate>
+};
 
 const Capability = ({ isPc }: { isPc: boolean }) => {
-  const isBrowser = useIsBrowser()
+  const isBrowser = useIsBrowser();
+  const { screenWidth, currentLanguage, cloudUrl, semParams } = useWindow();
 
   useLayoutEffect(() => {
     // @ts-ignore nextline
@@ -44,10 +47,10 @@ const Capability = ({ isPc }: { isPc: boolean }) => {
         animateClass: 'animate__fadeIn',
         offset: 0,
         mobile: false,
-        live: false,
-      }).init()
+        live: false
+      }).init();
     }
-  }, [isBrowser])
+  }, [isBrowser]);
 
   if (!isPc) {
     return (
@@ -55,7 +58,7 @@ const Capability = ({ isPc }: { isPc: boolean }) => {
         <div className="comet-icon">
           <CometIcon />
         </div>
-        <h1>{i18nObj.capability}</h1>
+        <h2>{i18nObj.capability}</h2>
         <div className="app-management">
           <div className="app-management-text">
             <div className="logo">
@@ -64,18 +67,16 @@ const Capability = ({ isPc }: { isPc: boolean }) => {
             <h3> {i18nObj.appMan} </h3>
             <h4>{i18nObj.appManagement_introduce}</h4>
             <a
-              href="https://cloud.sealos.io/?openapp=system-applaunchpad%3F"
-              target="_black">
-              Explore {'>'}
+              href={`${cloudUrl}/?bd_vid=${semParams.bd_vid}&k=${semParams.keywords}&openapp=system-applaunchpad%3F`}
+              target="_black"
+            >
+              {i18nObj.Explore} {'>'}
             </a>
           </div>
           <img
             draggable="false"
             className="app-management-img"
-            src={
-              require('@site/static/illustrations/app-launchpad-detail.png')
-                .default
-            }
+            src={require('@site/static/illustrations/app-launchpad-detail.png').default}
             alt="app-management"
           />
         </div>
@@ -87,17 +88,15 @@ const Capability = ({ isPc }: { isPc: boolean }) => {
           <div className="application-title">{i18nObj.database} </div>
           <div className="application-text">{i18nObj.database_introduce}</div>
           <a
-            href="https://cloud.sealos.io/?openapp=system-dbprovider%3F"
-            target="_black">
-            Explore {'>'}
+            href={`${cloudUrl}/?bd_vid=${semParams.bd_vid}&k=${semParams.keywords}&openapp=system-dbprovider%3F`}
+            target="_black"
+          >
+            {i18nObj.Explore} {'>'}
           </a>
           <img
             draggable="false"
             className="database-img"
-            src={
-              require('@site/static/illustrations/capability-dabase.png')
-                .default
-            }
+            src={require('@site/static/illustrations/capability-dabase.png').default}
             alt="app-management"
           />
         </div>
@@ -110,13 +109,13 @@ const Capability = ({ isPc }: { isPc: boolean }) => {
           <div className="application-text">{i18nObj.serverless_introduce}</div>
           <a
             className="application-link"
-            href="https://github.com/labring/laf"
-            target="_black">
-            Explore {'>'}
+            href={currentLanguage === 'en' ? '/self-hosting ' : '/zh-Hans/self-hosting '}
+          >
+            {i18nObj.Explore} {'>'}
           </a>
         </div>
       </div>
-    )
+    );
   }
 
   return (
@@ -124,7 +123,7 @@ const Capability = ({ isPc }: { isPc: boolean }) => {
       <div className="comet-icon">
         <CometIcon />
       </div>
-      <h1>{i18nObj.capability}</h1>
+      <h2>{i18nObj.capability}</h2>
       <div className="app-management animate__fadeIn" data-wow-duration="1s">
         <div className="app-management-text">
           <div className="logo">
@@ -133,18 +132,16 @@ const Capability = ({ isPc }: { isPc: boolean }) => {
           <h3> {i18nObj.appMan} </h3>
           <h4>{i18nObj.appManagement_introduce}</h4>
           <a
-            href="https://cloud.sealos.io/?openapp=system-applaunchpad%3F"
-            target="_black">
-            Explore {'>'}
+            href={`${cloudUrl}/?bd_vid=${semParams.bd_vid}&k=${semParams.keywords}&openapp=system-applaunchpad%3F`}
+            target="_black"
+          >
+            {i18nObj.Explore} {'>'}
           </a>
         </div>
         <img
           draggable="false"
           className="app-management-img"
-          src={
-            require('@site/static/illustrations/app-launchpad-detail.png')
-              .default
-          }
+          src={require('@site/static/illustrations/app-launchpad-detail.png').default}
           alt="app-management"
         />
       </div>
@@ -156,17 +153,15 @@ const Capability = ({ isPc }: { isPc: boolean }) => {
           <div className="application-title">{i18nObj.database}</div>
           <div className="application-text">{i18nObj.database_introduce}</div>
           <a
-            href="https://cloud.sealos.io/?openapp=system-dbprovider%3F"
-            target="_black">
-            Explore {'>'}
+            href={`${cloudUrl}/?bd_vid=${semParams.bd_vid}&k=${semParams.keywords}&openapp=system-dbprovider%3F`}
+            target="_black"
+          >
+            {i18nObj.Explore} {'>'}
           </a>
           <img
             draggable="false"
             className="database-img"
-            src={
-              require('@site/static/illustrations/capability-dabase.png')
-                .default
-            }
+            src={require('@site/static/illustrations/capability-dabase.png').default}
             alt="app-management"
           />
         </div>
@@ -178,14 +173,14 @@ const Capability = ({ isPc }: { isPc: boolean }) => {
           <div className="application-text">{i18nObj.serverless_introduce}</div>
           <a
             className="application-link"
-            href="https://github.com/labring/laf"
-            target="_black">
-            Explore {'>'}
+            href={currentLanguage === 'en' ? '/self-hosting ' : '/zh-Hans/self-hosting '}
+          >
+            {i18nObj.Explore} {'>'}
           </a>
         </div>
       </div>
     </div>
-  )
-}
+  );
+};
 
-export default React.memo(Capability)
+export default React.memo(Capability);

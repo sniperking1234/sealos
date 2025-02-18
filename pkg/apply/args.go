@@ -37,6 +37,14 @@ func (c *Cluster) RegisterFlags(fs *pflag.FlagSet, verb, action string) {
 	fs.StringVar(&c.ClusterName, "cluster", "default", fmt.Sprintf("name of cluster to applied %s action", action))
 }
 
+type ClusterName struct {
+	ClusterName string
+}
+
+func (c *ClusterName) RegisterFlags(fs *pflag.FlagSet, _, action string) {
+	fs.StringVar(&c.ClusterName, "cluster", "default", fmt.Sprintf("name of cluster to applied %s action", action))
+}
+
 type SSH struct {
 	User       string
 	Password   string
@@ -65,7 +73,7 @@ type RunArgs struct {
 func (arg *RunArgs) RegisterFlags(fs *pflag.FlagSet) {
 	arg.Cluster.RegisterFlags(fs, "run with", "run")
 	arg.SSH.RegisterFlags(fs)
-	fs.StringSliceVarP(&arg.CustomEnv, "env", "e", []string{}, "environment variables to set during command execution")
+	fs.StringSliceVarP(&arg.CustomEnv, "env", "e", []string{}, "environment variables to be set for images")
 	fs.StringSliceVar(&arg.CustomCMD, "cmd", []string{}, "override CMD directive in images")
 	fs.StringSliceVar(&arg.CustomConfigFiles, "config-file", []string{}, "path of custom config files, to use to replace the resource")
 }
@@ -80,17 +88,17 @@ type Args struct {
 func (arg *Args) RegisterFlags(fs *pflag.FlagSet) {
 	fs.StringSliceVar(&arg.Values, "values", []string{}, "values file to apply into Clusterfile")
 	fs.StringSliceVar(&arg.Sets, "set", []string{}, "set values on the command line")
-	fs.StringSliceVar(&arg.CustomEnv, "env", []string{}, "environment variables to set during command execution")
+	fs.StringSliceVar(&arg.CustomEnv, "env", []string{}, "environment variables to be set for images")
 	fs.StringSliceVar(&arg.CustomConfigFiles, "config-file", []string{}, "path of custom config files, to use to replace the resource")
 }
 
 type ResetArgs struct {
-	*Cluster
+	*ClusterName
 	*SSH
 }
 
 func (arg *ResetArgs) RegisterFlags(fs *pflag.FlagSet) {
-	arg.Cluster.RegisterFlags(fs, "be reset", "reset")
+	arg.ClusterName.RegisterFlags(fs, "be reset", "reset")
 	arg.SSH.RegisterFlags(fs)
 }
 

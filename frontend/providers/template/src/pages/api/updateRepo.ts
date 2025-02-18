@@ -1,12 +1,18 @@
+import { K8sApiDefault } from '@/services/backend/kubernetes';
 import { jsonRes } from '@/services/backend/response';
 import { ApiResp } from '@/services/kubernet';
+import { TemplateType } from '@/types/app';
 import { exec } from 'child_process';
 import fs from 'fs';
-import JSYAML from 'js-yaml';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import path from 'path';
+import util from 'util';
+import * as k8s from '@kubernetes/client-node';
+import { getYamlTemplate } from '@/utils/json-yaml';
+import { getTemplateEnvs } from '@/utils/tools';
+const execAsync = util.promisify(exec);
 
-const readFileList = (targetPath: string, fileList: unknown[] = [], handlePath: string) => {
+const readFileList = (targetPath: string, fileList: unknown[] = []) => {
   // fix ci
   const sanitizePath = (inputPath: string) => {
     if (typeof inputPath !== 'string') {
@@ -20,47 +26,92 @@ const readFileList = (targetPath: string, fileList: unknown[] = [], handlePath: 
     // ok:path-join-resolve-traversal
     const filePath = path.join(sanitizePath(targetPath), sanitizePath(item));
     const stats = fs.statSync(filePath);
-    if (stats.isFile() && path.extname(item) === '.yaml' && item !== 'template.yaml') {
+    const isYamlFile = path.extname(item) === '.yaml' || path.extname(item) === '.yml';
+    if (stats.isFile() && isYamlFile && item !== 'template.yaml') {
       fileList.push(filePath);
-    } else if (stats.isDirectory() && item === handlePath) {
-      readFileList(filePath, fileList, handlePath);
+    } else if (stats.isDirectory()) {
+      readFileList(filePath, fileList);
     }
   });
 };
 
+export async function GetTemplateStatic() {
+  try {
+    const defaultKC = K8sApiDefault();
+    const result = await defaultKC
+      .makeApiClient(k8s.CoreV1Api)
+      .readNamespacedConfigMap('template-static', 'template-frontend');
+
+    const inputString = result?.body?.data?.['install-count'] || '';
+
+    const installCountArray = inputString.split(/\n/).filter(Boolean);
+
+    const temp: { [key: string]: number } = {};
+    installCountArray.forEach((item) => {
+      const match = item.trim().match(/^(\d+)\s(.+)$/);
+      if (match) {
+        const count = match[1];
+        const name = match[2];
+        temp[name] = parseInt(count, 10);
+      } else {
+        console.error(`Data format error: ${item}`);
+      }
+    });
+    return temp;
+  } catch (error: any) {
+    console.log('error: kubectl get configmap/template-static \n', error?.body);
+    return {};
+  }
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ApiResp>) {
   try {
-    const repoHttpUrl =
-      process.env.TEMPLATE_REPO_URL || 'https://github.com/labring-actions/templates';
+    const targetFolder = process.env.TEMPLATE_REPO_FOLDER || 'template';
     const originalPath = process.cwd();
-    const targetPath = path.resolve(originalPath, 'FastDeployTemplates');
-    const jsonPath = path.resolve(originalPath, 'fast_deploy_template.json');
+    const targetPath = path.resolve(originalPath, 'templates');
+    const jsonPath = path.resolve(originalPath, 'templates.json');
 
-    if (!fs.existsSync(targetPath)) {
-      exec(`git clone ${repoHttpUrl} ${targetPath}`, (error, stdout, stderr) => {
-        console.log(error, stdout);
-      });
-    } else {
-      exec(`cd ${targetPath} && git pull`, (error, stdout, stderr) => {
-        console.log(error, stdout);
-      });
+    const TemplateEnvs = getTemplateEnvs();
+
+    try {
+      const gitConfigResult = await execAsync(
+        'git config --global --add safe.directory /app/providers/template/templates',
+        { timeout: 10000 }
+      );
+      const gitCommand = !fs.existsSync(targetPath)
+        ? `git clone -b ${TemplateEnvs.TEMPLATE_REPO_BRANCH} ${TemplateEnvs.TEMPLATE_REPO_URL} ${targetPath} --depth=1`
+        : `cd ${targetPath} && git pull --depth=1 --rebase`;
+
+      const result = await execAsync(gitCommand, { timeout: 60000 });
+
+      console.log('git operation:', result);
+    } catch (error) {
+      console.log('git operation timed out: \n', error);
     }
 
     if (!fs.existsSync(targetPath)) {
-      return jsonRes(res, { error: 'template repo err', code: 500 });
+      return jsonRes(res, { error: 'missing template repository file', code: 500 });
     }
 
     let fileList: unknown[] = [];
-    readFileList(targetPath, fileList, 'template');
+    const _targetPath = path.join(targetPath, targetFolder);
+    readFileList(_targetPath, fileList);
+
+    const templateStaticMap: { [key: string]: number } = await GetTemplateStatic();
 
     let jsonObjArr: unknown[] = [];
     fileList.forEach((item: any) => {
       try {
         if (!item) return;
+        const fileName = path.basename(item);
         const content = fs.readFileSync(item, 'utf-8');
-        const yamlTemplate: any = JSYAML.loadAll(content)[0];
-        if (!!yamlTemplate) {
-          jsonObjArr.push(yamlTemplate);
+        const { templateYaml } = getYamlTemplate(content);
+        if (!!templateYaml) {
+          const appTitle = templateYaml.spec.title.toUpperCase();
+          templateYaml.spec['deployCount'] = templateStaticMap[appTitle];
+          templateYaml.spec['filePath'] = item;
+          templateYaml.spec['fileName'] = fileName;
+          jsonObjArr.push(templateYaml);
         }
       } catch (error) {
         console.log(error, 'yaml parse error');
@@ -70,7 +121,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const jsonContent = JSON.stringify(jsonObjArr, null, 2);
     fs.writeFileSync(jsonPath, jsonContent, 'utf-8');
 
-    jsonRes(res, { data: `success update template ${repoHttpUrl}`, code: 200 });
+    jsonRes(res, {
+      data: `success update template ${TemplateEnvs.TEMPLATE_REPO_URL} branch ${TemplateEnvs.TEMPLATE_REPO_BRANCH}`,
+      code: 200
+    });
   } catch (err: any) {
     jsonRes(res, {
       code: 500,

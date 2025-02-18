@@ -1,6 +1,5 @@
 import { AdminerStatus, generateAdminerTemplate } from '@/interfaces/adminer';
 import { generateKubeBlockClusters } from '@/interfaces/kubeblock';
-import { generateZalanDoPostgresClusters } from '@/interfaces/zalando';
 import { authSession } from '@/service/auth';
 import {
   CRDMeta,
@@ -26,7 +25,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const kc = K8sApi(kubeconfig);
 
     const kube_user = kc.getCurrentUser();
-
     if (
       !kube_user ||
       !kube_user.name ||
@@ -36,17 +34,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const adminerName = 'adminer-' + kube_user.name;
-    const namespace = GetUserDefaultNameSpace(kube_user.name);
+    const namespace = kc.contexts[0]?.namespace || GetUserDefaultNameSpace(kube_user.name);
 
     let connections: string[] = [];
     try {
       // get kubeblock clusters
       connections = await generateKubeBlockClusters(kc, namespace);
-
-      if (process.env.ZALANDO_ENABLED === '1') {
-        const zalandoConnections = await generateZalanDoPostgresClusters(kc, namespace);
-        connections = connections.concat(zalandoConnections);
-      }
     } catch (error) {
       // console.log(error);
     }

@@ -1,6 +1,6 @@
-import * as yaml from 'js-yaml';
 import { CRDMeta } from '@/types/crd';
 import { endOfDay, getMonth, getYear } from 'date-fns';
+import * as yaml from 'js-yaml';
 export type PaymentForm = {
   paymentName: string;
   namespace: string;
@@ -89,8 +89,16 @@ export const START_TIME = new Date(2023, 0, 1);
 export const END_TIME = endOfDay(new Date());
 export const valuationMap = new Map([
   ['cpu', { unit: 'Core', scale: 1000, bg: '#33BABB', idx: 0 }],
-  ['memory', { unit: 'GiB', scale: 1024, bg: '#36ADEF', idx: 1 }],
-  ['storage', { unit: 'GiB', scale: 1024, bg: '#8172D8', idx: 2 }],
-  ['gpu', { unit: 'GPU', scale: 1000, bg: '#89CD11', idx: 3 }]
-  // ['network', { unit: 'M', scale: 1, bg: '#89CD11', idx: 4 }]
-]);
+  ['memory', { unit: 'GB', scale: 1024, bg: '#36ADEF', idx: 1 }],
+  ['storage', { unit: 'GB', scale: 1024, bg: '#9A8EE0', idx: 2 }],
+  ['gpu', { unit: 'GPU Unit', scale: 1000, bg: '#6FCA88', idx: 3 }],
+  ['network', { unit: 'M', scale: 1, bg: '#F182AA', idx: 4 }],
+  ['services.nodeports', { unit: 'port_unit', scale: 1000, bg: '#F182AA', idx: 5 }]
+] as const);
+// export const BillingUnitMap = new Map([
+// 	['cpu', { unit: ''}]
+// 	['port', { unit: ''}]
+// 	['port', { unit: ''}]
+// 	['port', { unit: ''}]
+// 	['port', { unit: ''}]
+// ])

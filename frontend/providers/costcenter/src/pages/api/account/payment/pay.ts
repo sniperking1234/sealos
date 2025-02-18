@@ -2,12 +2,11 @@ import { paymentMeta } from '@/constants/payment';
 import { authSession } from '@/service/backend/auth';
 import { GetCRD, GetUserDefaultNameSpace } from '@/service/backend/kubernetes';
 import { jsonRes } from '@/service/backend/response';
-import { enableRecharge } from '@/service/enabled';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 export default async function handler(req: NextApiRequest, resp: NextApiResponse) {
   try {
-    if (!enableRecharge) {
+    if (!global.AppConfig.costCenter.recharge.enabled) {
       throw new Error('recharge is not enabled');
     }
     const kc = await authSession(req.headers);
@@ -21,7 +20,6 @@ export default async function handler(req: NextApiRequest, resp: NextApiResponse
     if (kube_user === null) {
       return jsonRes(resp, { code: 404, message: 'user not found' });
     }
-
     // get payment crd
     type paymentStatus = {
       tradeNo: string;
@@ -29,14 +27,14 @@ export default async function handler(req: NextApiRequest, resp: NextApiResponse
       status: string;
     };
 
-    const paymentM = { ...paymentMeta, namespace: GetUserDefaultNameSpace(kube_user.name) };
-    const paymentDesc = (await GetCRD(kc, paymentM, id)) as {
-      body: {
-        status: object;
-      };
+    const paymentM = {
+      ...paymentMeta,
+      namespace: GetUserDefaultNameSpace(kube_user.name)
     };
-    console.log(paymentDesc);
+    const paymentDesc = await GetCRD(kc, paymentM, id);
+    //@ts-ignore
     if (paymentDesc?.body?.status) {
+      // @ts-ignore
       const paymentStatusResp = paymentDesc.body.status as paymentStatus;
       return jsonRes(resp, { data: paymentStatusResp });
     } else {

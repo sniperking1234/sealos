@@ -1,6 +1,6 @@
 import DeveloperIcon from '@site/static/icons/developer.svg'
 import DiscordIcon from '@site/static/icons/discord.svg'
-import GithubIcon from '@site/static/icons/github-light.svg'
+import GithubIcon from '@site/static/icons/github.svg'
 import React, { useLayoutEffect } from 'react'
 import CometIcon from '../Comet'
 import Link from '@docusaurus/Link'
@@ -16,8 +16,7 @@ const Community = ({ isPc }: { isPc: boolean }) => {
     joinCommunity: <Translate>Join Sealos Community</Translate>,
     joinCommunityIntroduce: (
       <Translate>
-        Experience the latest version of Sealos for the first time and
-        communicate with developers and users in Discord!
+        Get early access to the latest Sealos versions and stay connected with developers and users on Discord.
       </Translate>
     ),
   }

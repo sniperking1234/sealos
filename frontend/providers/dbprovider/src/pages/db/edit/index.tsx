@@ -1,29 +1,33 @@
-import React, { useState, useCallback, useMemo } from 'react';
-import { useRouter } from 'next/router';
-import { Flex, Box } from '@chakra-ui/react';
-import type { YamlItemType } from '@/types';
-import { json2CreateCluster, json2Account, limitRangeYaml } from '@/utils/json2Yaml';
-import { useForm } from 'react-hook-form';
+import { adapterMongoHaConfig, applyYamlList, createDB } from '@/api/db';
+import { BackupSupportedDBTypeList, defaultDBEditValue } from '@/constants/db';
 import { editModeMap } from '@/constants/editApp';
-import { defaultDBEditValue } from '@/constants/db';
-import debounce from 'lodash/debounce';
-import { applyYamlList } from '@/api/db';
 import { useConfirm } from '@/hooks/useConfirm';
-import type { DBEditType } from '@/types/db';
-import { useToast } from '@/hooks/useToast';
-import { useQuery } from '@tanstack/react-query';
-import { useDBStore } from '@/store/db';
 import { useLoading } from '@/hooks/useLoading';
-import dynamic from 'next/dynamic';
+import { useDBStore } from '@/store/db';
 import { useGlobalStore } from '@/store/global';
-import { serviceSideProps } from '@/utils/i18n';
-import { useTranslation } from 'next-i18next';
-import { adaptDBForm } from '@/utils/adapt';
 import { DBVersionMap } from '@/store/static';
-import Header from './components/Header';
+import { useUserStore } from '@/store/user';
+import type { YamlItemType } from '@/types';
+import type { DBEditType } from '@/types/db';
+import { adaptDBForm, convertBackupFormToSpec } from '@/utils/adapt';
+import { serviceSideProps } from '@/utils/i18n';
+import { json2Account, json2CreateCluster, limitRangeYaml } from '@/utils/json2Yaml';
+import { Box, Flex } from '@chakra-ui/react';
+import { useMessage } from '@sealos/ui';
+import { useQuery } from '@tanstack/react-query';
+import debounce from 'lodash/debounce';
+import { useTranslation } from 'next-i18next';
+import dynamic from 'next/dynamic';
+import { useRouter } from 'next/router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FieldErrors, useForm } from 'react-hook-form';
 import Form from './components/Form';
+import Header from './components/Header';
 import Yaml from './components/Yaml';
-const ErrorModal = dynamic(() => import('./components/ErrorModal'));
+import useDriver from '@/hooks/useDriver';
+import { updateBackupPolicy } from '@/api/backup';
+
+const ErrorModal = dynamic(() => import('@/components/ErrorModal'));
 
 const defaultEdit = {
   ...defaultDBEditValue,
@@ -31,15 +35,19 @@ const defaultEdit = {
 };
 
 const EditApp = ({ dbName, tabType }: { dbName?: string; tabType?: 'form' | 'yaml' }) => {
+  const { startGuide, isGuided } = useDriver();
   const { t } = useTranslation();
   const router = useRouter();
   const [yamlList, setYamlList] = useState<YamlItemType[]>([]);
   const [errorMessage, setErrorMessage] = useState('');
   const [forceUpdate, setForceUpdate] = useState(false);
   const [minStorage, setMinStorage] = useState(1);
-  const { toast } = useToast();
+  const { message: toast } = useMessage();
   const { Loading, setIsLoading } = useLoading();
-  const { loadDBDetail } = useDBStore();
+  const { loadDBDetail, dbDetail } = useDBStore();
+  const oldDBEditData = useRef<DBEditType>();
+  const { checkQuotaAllow } = useUserStore();
+
   const { title, applyBtnText, applyMessage, applySuccess, applyError } = editModeMap(!!dbName);
   const { openConfirm, ConfirmChild } = useConfirm({
     content: t(applyMessage)
@@ -47,7 +55,7 @@ const EditApp = ({ dbName, tabType }: { dbName?: string; tabType?: 'form' | 'yam
   const isEdit = useMemo(() => !!dbName, [dbName]);
 
   // compute container width
-  const { screenWidth } = useGlobalStore();
+  const { screenWidth, lastRoute } = useGlobalStore();
   const pxVal = useMemo(() => {
     const val = Math.floor((screenWidth - 1050) / 2);
     if (val < 20) {
@@ -61,74 +69,97 @@ const EditApp = ({ dbName, tabType }: { dbName?: string; tabType?: 'form' | 'yam
     defaultValues: defaultEdit
   });
 
+  useEffect(() => {
+    if (isGuided) {
+      formHook.setValue('storage', 1);
+    }
+  }, [isGuided]);
+
+  const generateYamlList = (data: DBEditType) => {
+    return [
+      ...(isEdit
+        ? []
+        : [
+            {
+              filename: 'account.yaml',
+              value: json2Account(data)
+            }
+          ]),
+      {
+        filename: 'cluster.yaml',
+        value: json2CreateCluster(data)
+      }
+    ];
+  };
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const formOnchangeDebounce = useCallback(
     debounce((data: DBEditType) => {
       try {
-        setYamlList([
-          {
-            filename: 'cluster.yaml',
-            value: json2CreateCluster(data)
-          },
-          ...(isEdit
-            ? []
-            : [
-                {
-                  filename: 'account.yaml',
-                  value: json2Account(data)
-                }
-              ])
-        ]);
+        setYamlList(generateYamlList(data));
       } catch (error) {
         console.log(error);
       }
     }, 200),
     []
   );
+
   // watch form change, compute new yaml
   formHook.watch((data) => {
     data && formOnchangeDebounce(data as DBEditType);
     setForceUpdate(!forceUpdate);
   });
 
-  const submitSuccess = useCallback(async () => {
+  const submitSuccess = async (formData: DBEditType) => {
+    const needMongoAdapter =
+      formData.dbType === 'mongodb' && formData.replicas !== oldDBEditData.current?.replicas;
     setIsLoading(true);
     try {
       !isEdit && (await applyYamlList([limitRangeYaml], 'create'));
+      needMongoAdapter && (await adapterMongoHaConfig({ name: formData.dbName }));
     } catch (err) {}
     try {
-      const data = yamlList.map((item) => item.value);
-
-      await applyYamlList(data, isEdit ? 'replace' : 'create');
-
+      // quote check
+      const quoteCheckRes = checkQuotaAllow(formData, oldDBEditData.current);
+      if (quoteCheckRes) {
+        setIsLoading(false);
+        return toast({
+          status: 'warning',
+          title: t(quoteCheckRes),
+          duration: 5000,
+          isClosable: true
+        });
+      }
+      await createDB({ dbForm: formData, isEdit });
       toast({
         title: t(applySuccess),
         status: 'success'
       });
-      router.replace(`/db/detail?name=${formHook.getValues('dbName')}`);
+      router.replace(`/db/detail?name=${formData.dbName}&dbType=${formData.dbType}`);
     } catch (error) {
       console.error(error);
       setErrorMessage(JSON.stringify(error));
     }
     setIsLoading(false);
-  }, [applySuccess, formHook, isEdit, router, setIsLoading, t, toast, yamlList]);
-  const submitError = useCallback(() => {
+  };
+
+  const submitError = (err: FieldErrors<DBEditType>) => {
     // deep search message
     const deepSearch = (obj: any): string => {
-      if (!obj) return t('Submit Error');
+      if (!obj || typeof obj !== 'object') return t('submit_error');
       if (!!obj.message) {
         return obj.message;
       }
       return deepSearch(Object.values(obj)[0]);
     };
     toast({
-      title: deepSearch(formHook.formState.errors),
+      title: deepSearch(err),
       status: 'error',
       position: 'top',
       duration: 3000,
       isClosable: true
     });
-  }, [formHook.formState.errors, t, toast]);
+  };
 
   useQuery(
     ['init'],
@@ -152,6 +183,7 @@ const EditApp = ({ dbName, tabType }: { dbName?: string; tabType?: 'form' | 'yam
     {
       onSuccess(res) {
         if (!res) return;
+        oldDBEditData.current = res;
         formHook.reset(adaptDBForm(res));
         setMinStorage(res.storage);
       },
@@ -174,14 +206,19 @@ const EditApp = ({ dbName, tabType }: { dbName?: string; tabType?: 'form' | 'yam
         alignItems={'center'}
         h={'100%'}
         minWidth={'1024px'}
-        bg={'#F3F4F5'}
+        backgroundColor={'grayModern.100'}
       >
         <Header
           dbName={formHook.getValues('dbName')}
           title={title}
           yamlList={yamlList}
           applyBtnText={applyBtnText}
-          applyCb={() => formHook.handleSubmit(openConfirm(submitSuccess), submitError)()}
+          applyCb={() =>
+            formHook.handleSubmit(
+              (data) => openConfirm(() => submitSuccess(data))(),
+              (err) => submitError(err)
+            )()
+          }
         />
 
         <Box flex={'1 0 0'} h={0} w={'100%'} pb={4}>

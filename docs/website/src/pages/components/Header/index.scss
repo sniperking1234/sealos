@@ -6,6 +6,7 @@
   justify-content: center;
   align-items: center;
   flex-direction: column;
+  // padding-top: 48px; // sale
 
   .header-img {
     width: 100%;
@@ -91,6 +92,7 @@
         margin-left: 16px;
         font-weight: 500;
         color: #fff;
+        cursor: pointer;
         a {
           font-size: 16px;
         }
@@ -108,6 +110,7 @@
         border-radius: 4px;
         background: rgba(255, 255, 255, 0.2);
         filter: blur(4px);
+        pointer-events: none;
       }
 
       .start-now-button {
@@ -133,7 +136,7 @@
     max-width: 1120px;
     margin: 0 auto;
     z-index: 9;
-    h1 {
+    .sealos-main-header {
       margin-top: 100px;
       margin-bottom: 0;
       font-size: 48px;
@@ -145,7 +148,7 @@
         color: rgba(185, 221, 255, 1);
       }
     }
-    h2 {
+    h1 {
       margin-bottom: 0;
       color: rgba(255, 255, 255, 1);
       text-shadow: 0px 4px 4px 0px rgba(0, 0, 0, 0.25);
@@ -164,7 +167,7 @@
       .txt-title {
         color: #379fff;
       }
-      @media screen and (min-width: 450px) and (max-width: 996px) {
+      @media screen and (min-width: 450px) and (max-width: 1000px) {
         padding: 0 60px;
       }
     }
@@ -179,10 +182,17 @@
   }
 }
 
+.sealos_home_header_title {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  cursor: pointer;
+}
+
 @media screen and (max-width: 1220px) {
   .home-header {
     main {
-      h2 {
+      h1 {
         font-size: 80px;
       }
     }

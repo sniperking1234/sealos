@@ -1,24 +1,26 @@
-import { useEffect, useState } from 'react';
-import Head from 'next/head';
-import type { AppProps } from 'next/app';
-import { ChakraProvider } from '@chakra-ui/react';
 import { theme } from '@/constants/theme';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import Router from 'next/router';
-import NProgress from 'nprogress'; //nprogress module
-import { sealosApp, createSealosApp } from 'sealos-desktop-sdk/app';
-import { EVENT_NAME } from 'sealos-desktop-sdk';
 import { useConfirm } from '@/hooks/useConfirm';
-import throttle from 'lodash/throttle';
-import { useGlobalStore } from '@/store/global';
 import { useLoading } from '@/hooks/useLoading';
-import { loadInitData } from '@/store/static';
-import { useRouter } from 'next/router';
-import { appWithTranslation, useTranslation } from 'next-i18next';
+import { useGlobalStore } from '@/store/global';
+import { DESKTOP_DOMAIN, loadInitData } from '@/store/static';
+import { useUserStore } from '@/store/user';
 import { getLangStore, setLangStore } from '@/utils/cookieUtils';
-
-import 'nprogress/nprogress.css';
+import { ChakraProvider } from '@chakra-ui/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import throttle from 'lodash/throttle';
+import { appWithTranslation, useTranslation } from 'next-i18next';
+import type { AppProps } from 'next/app';
+import Head from 'next/head';
+import Router, { useRouter } from 'next/router';
+import NProgress from 'nprogress'; //nprogress module
+import { useEffect, useState } from 'react';
+import { EVENT_NAME } from 'sealos-desktop-sdk';
+import { createSealosApp, sealosApp } from 'sealos-desktop-sdk/app';
 import '@/styles/reset.scss';
+import 'nprogress/nprogress.css';
+import '@sealos/driver/src/driver.css';
+import { AppEditSyncedFields } from '@/types/app';
+import Script from 'next/script';
 
 //Binding events.
 Router.events.on('routeChangeStart', () => NProgress.start());
@@ -39,8 +41,8 @@ const queryClient = new QueryClient({
 const App = ({ Component, pageProps }: AppProps) => {
   const router = useRouter();
   const { i18n } = useTranslation();
-  const { setScreenWidth, loading, setLastRoute, getUserSourcePrice, initFormSliderList } =
-    useGlobalStore();
+  const { setScreenWidth, loading, setLastRoute, initFormSliderList } = useGlobalStore();
+  const { loadUserSourcePrice } = useUserStore();
   const { Loading } = useLoading();
   const [refresh, setRefresh] = useState(false);
   const { openConfirm, ConfirmChild } = useConfirm({
@@ -49,35 +51,32 @@ const App = ({ Component, pageProps }: AppProps) => {
   });
 
   useEffect(() => {
-    NProgress.start();
-
-    getUserSourcePrice();
-
     const response = createSealosApp();
-
     (async () => {
-      const { SEALOS_DOMAIN, FORM_SLIDER_LIST_CONFIG } = await (() => loadInitData())();
+      const { FORM_SLIDER_LIST_CONFIG, DESKTOP_DOMAIN } = await (() => loadInitData())();
       initFormSliderList(FORM_SLIDER_LIST_CONFIG);
+      loadUserSourcePrice();
 
       try {
-        const res = await sealosApp.getSession();
-        localStorage.setItem('session', JSON.stringify(res));
+        const newSession = JSON.stringify(await sealosApp.getSession());
+        const oldSession = localStorage.getItem('session');
+        if (newSession && newSession !== oldSession) {
+          localStorage.setItem('session', newSession);
+          window.location.reload();
+        }
         console.log('app init success');
       } catch (err) {
         console.log('App is not running in desktop');
         if (!process.env.NEXT_PUBLIC_MOCK_USER) {
           localStorage.removeItem('session');
-
           openConfirm(() => {
-            window.open(`https://${SEALOS_DOMAIN}`, '_self');
+            window.open(`https://${DESKTOP_DOMAIN}`, '_self');
           })();
         }
       }
     })();
-    NProgress.done();
-
     return response;
-  }, [getUserSourcePrice, initFormSliderList, openConfirm]);
+  }, []);
 
   // add resize event
   useEffect(() => {
@@ -95,7 +94,7 @@ const App = ({ Component, pageProps }: AppProps) => {
   }, [setScreenWidth]);
 
   useEffect(() => {
-    const changeI18n = async (data: any) => {
+    const changeI18n = async (data: { currentLanguage: string }) => {
       const lastLang = getLangStore();
       const newLang = data.currentLanguage;
       if (lastLang !== newLang) {
@@ -123,14 +122,57 @@ const App = ({ Component, pageProps }: AppProps) => {
   // record route
   useEffect(() => {
     return () => {
-      setLastRoute(router.asPath);
+      const currentPath = router.asPath;
+      if (router.isReady && !currentPath.includes('/redirect')) {
+        setLastRoute(currentPath);
+      }
     };
-  }, [router.pathname]);
+  }, [router.pathname, router.isReady, setLastRoute]);
 
   useEffect(() => {
-    const lang = getLangStore() || 'en';
+    const lang = getLangStore() || 'zh';
     i18n?.changeLanguage?.(lang);
   }, [refresh, router.pathname]);
+
+  useEffect(() => {
+    const setupInternalAppCallListener = async () => {
+      try {
+        const event = async (
+          e: MessageEvent<{
+            type?: string;
+            name?: string;
+            formData?: string;
+          }>
+        ) => {
+          const whitelist = [`https://${DESKTOP_DOMAIN}`];
+          if (!whitelist.includes(e.origin)) {
+            return;
+          }
+          try {
+            if (e.data?.type === 'InternalAppCall') {
+              const { name, formData } = e.data;
+              if (formData) {
+                router.replace({
+                  pathname: '/redirect',
+                  query: { formData }
+                });
+              } else if (name) {
+                router.replace({
+                  pathname: '/app/detail',
+                  query: { name }
+                });
+              }
+            }
+          } catch (error) {
+            console.log(error, 'error');
+          }
+        };
+        window.addEventListener('message', event);
+        return () => window.removeEventListener('message', event);
+      } catch (error) {}
+    };
+    setupInternalAppCallListener();
+  }, []);
 
   return (
     <>
@@ -142,6 +184,19 @@ const App = ({ Component, pageProps }: AppProps) => {
       </Head>
       <QueryClientProvider client={queryClient}>
         <ChakraProvider theme={theme}>
+          {/* <button
+            onClick={() => {
+              const lastLang = getLangStore();
+              let lang = lastLang === 'en' ? 'zh' : 'en';
+              if (lastLang !== lang) {
+                i18n.changeLanguage(lang);
+                setLangStore(lang);
+                setRefresh((state) => !state);
+              }
+            }}
+          >
+            changeLanguage
+          </button> */}
           <Component {...pageProps} />
           <ConfirmChild />
           <Loading loading={loading} />

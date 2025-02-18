@@ -7,6 +7,21 @@ import { DeployKindsType } from '@/types/app';
 import type { AppPatchPropsType } from '@/types/app';
 import { YamlKindEnum } from './adapt';
 import { useTranslation } from 'next-i18next';
+import * as jsonpatch from 'fast-json-patch';
+
+export function formatSize(size: number, fixedNumber = 2) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+  let i = 0;
+  while (size >= 1024) {
+    size /= 1024;
+    i++;
+  }
+  return size.toFixed(fixedNumber) + ' ' + units[i];
+}
+
+export const formatTime = (time: string | number | Date, format = 'YYYY-MM-DD HH:mm:ss') => {
+  return dayjs(time).format(format);
+};
 
 /**
  * copy text data
@@ -54,7 +69,11 @@ export const pathFormat = (str: string) => {
   return `./${str}`;
 };
 export const pathToNameFormat = (str: string) => {
-  return str.replace(/(\/|\.)/g, 'vn-').toLocaleLowerCase();
+  const endsWithSlash = str.endsWith('/');
+  const withoutTrailingSlash = endsWithSlash ? str.slice(0, -1) : str;
+  const replacedStr = withoutTrailingSlash.replace(/_/g, '-').replace(/[\/.]/g, 'vn-');
+
+  return endsWithSlash ? replacedStr : replacedStr.toLowerCase();
 };
 
 /**
@@ -219,36 +238,159 @@ export function downLoadBold(content: BlobPart, type: string, fileName: string) 
 /**
  * patch yamlList and get action
  */
-export const patchYamlList = (oldYamlList: string[], newYamlList: string[]) => {
-  const oldJsonYaml = oldYamlList.map((item) => yaml.loadAll(item)).flat() as DeployKindsType[];
-  const newJsonYaml = newYamlList.map((item) => yaml.loadAll(item)).flat() as DeployKindsType[];
+export const patchYamlList = ({
+  parsedOldYamlList,
+  parsedNewYamlList,
+  originalYamlList
+}: {
+  parsedOldYamlList: string[];
+  parsedNewYamlList: string[];
+  originalYamlList: DeployKindsType[];
+}) => {
+  const oldFormJsonList = parsedOldYamlList
+    .map((item) => yaml.loadAll(item))
+    .flat() as DeployKindsType[];
+
+  const newFormJsonList = parsedNewYamlList
+    .map((item) => yaml.loadAll(item))
+    .flat() as DeployKindsType[];
 
   const actions: AppPatchPropsType = [];
 
   // find delete
-  oldJsonYaml.forEach((oldYaml) => {
-    const item = newJsonYaml.find((item) => item.kind === oldYaml.kind);
-    if (!item) {
+  oldFormJsonList.forEach((oldYamlJson) => {
+    const item = newFormJsonList.find(
+      (item) => item.kind === oldYamlJson.kind && item.metadata?.name === oldYamlJson.metadata?.name
+    );
+    if (!item && oldYamlJson.metadata?.name) {
       actions.push({
         type: 'delete',
-        kind: oldYaml.kind as `${YamlKindEnum}`
+        kind: oldYamlJson.kind as `${YamlKindEnum}`,
+        name: oldYamlJson.metadata?.name
       });
     }
   });
+
   // find create and patch
-  newJsonYaml.forEach((newYaml) => {
-    const patchYaml = oldJsonYaml.find((item) => item.kind === newYaml.kind);
-    if (patchYaml) {
+  newFormJsonList.forEach((newYamlJson) => {
+    const oldFormJson = oldFormJsonList.find(
+      (item) =>
+        item.kind === newYamlJson.kind && item?.metadata?.name === newYamlJson?.metadata?.name
+    );
+
+    if (oldFormJson) {
+      const patchRes = jsonpatch.compare(oldFormJson, newYamlJson);
+
+      if (patchRes.length === 0) return;
+
+      /* Generate a new json using the formPatchResult and the crJson */
+      const actionsJson = (() => {
+        try {
+          /* find cr json */
+          let crOldYamlJson = originalYamlList.find(
+            (item) =>
+              item.kind === oldFormJson?.kind &&
+              item?.metadata?.name === oldFormJson?.metadata?.name
+          );
+
+          if (!crOldYamlJson) return newYamlJson;
+          crOldYamlJson = JSON.parse(JSON.stringify(crOldYamlJson));
+
+          if (!crOldYamlJson) return newYamlJson;
+
+          /* Fill in volumn */
+          if (
+            oldFormJson.kind === YamlKindEnum.Deployment ||
+            oldFormJson.kind === YamlKindEnum.StatefulSet
+          ) {
+            // @ts-ignore
+            crOldYamlJson.spec.template.spec.volumes = oldFormJson.spec.template.spec.volumes;
+            // @ts-ignore
+            crOldYamlJson.spec.template.spec.containers[0].volumeMounts =
+              // @ts-ignore
+              oldFormJson.spec.template.spec.containers[0].volumeMounts;
+            // @ts-ignore
+            crOldYamlJson.spec.volumeClaimTemplates = oldFormJson.spec.volumeClaimTemplates;
+          }
+
+          /* generate new json */
+          const _patchRes: jsonpatch.Operation[] = patchRes
+            .map((item) => {
+              let jsonPatchError = jsonpatch.validate([item], crOldYamlJson);
+              if (jsonPatchError?.name === 'OPERATION_PATH_UNRESOLVABLE') {
+                switch (item.op) {
+                  case 'add':
+                  case 'replace':
+                    return {
+                      ...item,
+                      op: 'add' as const,
+                      value: item.value ?? ''
+                    };
+                  default:
+                    return null;
+                }
+              }
+              return item;
+            })
+            .filter((op): op is jsonpatch.Operation => op !== null);
+
+          const patchResYamlJson = jsonpatch.applyPatch(crOldYamlJson, _patchRes, true).newDocument;
+
+          // delete invalid field
+          // @ts-ignore
+          delete patchResYamlJson.status;
+          patchResYamlJson.metadata = {
+            name: patchResYamlJson.metadata?.name,
+            namespace: patchResYamlJson.metadata?.namespace,
+            labels: patchResYamlJson.metadata?.labels,
+            annotations: patchResYamlJson.metadata?.annotations,
+            ownerReferences: patchResYamlJson.metadata?.ownerReferences,
+            finalizers: patchResYamlJson.metadata?.finalizers
+          };
+
+          return patchResYamlJson;
+        } catch (error) {
+          console.error('ACTIONS JSON ERROR:\n', error);
+          return newYamlJson;
+        }
+      })();
+
+      // adapt deployment,statefulset,service ports
+      if (
+        actionsJson.kind === YamlKindEnum.Deployment ||
+        actionsJson.kind === YamlKindEnum.StatefulSet
+      ) {
+        // @ts-ignore
+        const ports = actionsJson?.spec.template.spec.containers[0].ports || [];
+        if (ports.length > 1 && !ports[0]?.name) {
+          // @ts-ignore
+          actionsJson.spec.template.spec.containers[0].ports[0].name = 'adaptport';
+        }
+      }
+      if (actionsJson.kind === YamlKindEnum.Service) {
+        // @ts-ignore
+        const ports = actionsJson?.spec.ports || [];
+        console.log(ports);
+
+        // @ts-ignore
+        if (ports.length > 1 && !ports[0]?.name) {
+          // @ts-ignore
+          actionsJson.spec.ports[0].name = 'adaptport';
+        }
+      }
+
+      console.log('patch result:', oldFormJson.metadata?.name, oldFormJson.kind, actionsJson);
+
       actions.push({
         type: 'patch',
-        kind: newYaml.kind as `${YamlKindEnum}`,
-        value: newYaml
+        kind: newYamlJson.kind as `${YamlKindEnum}`,
+        value: actionsJson as any
       });
     } else {
       actions.push({
         type: 'create',
-        kind: newYaml.kind as `${YamlKindEnum}`,
-        value: yaml.dump(newYaml)
+        kind: newYamlJson.kind as `${YamlKindEnum}`,
+        value: yaml.dump(newYamlJson)
       });
     }
   });
@@ -307,4 +449,30 @@ export const isElementInViewport = (element: Element) => {
   const vertInView = rect.top <= windowHeight && rect.top + rect.height >= 0;
   const horInView = rect.left <= windowWidth && rect.left + rect.width >= 0;
   return vertInView && horInView;
+};
+
+export const getErrText = (err: any, def = '') => {
+  const msg: string = typeof err === 'string' ? err : err?.message || def || '';
+  msg && console.log('error =>', msg);
+  return msg;
+};
+
+export const formatMoney = (mone: number) => {
+  return mone / 1000000;
+};
+
+// convertBytes 1024
+export const convertBytes = (bytes: number, unit: 'kb' | 'mb' | 'gb' | 'tb') => {
+  switch (unit.toLowerCase()) {
+    case 'kb':
+      return bytes / 1024;
+    case 'mb':
+      return bytes / Math.pow(1024, 2);
+    case 'gb':
+      return bytes / Math.pow(1024, 3);
+    case 'tb':
+      return bytes / Math.pow(1024, 4);
+    default:
+      return bytes;
+  }
 };

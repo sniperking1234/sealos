@@ -3,7 +3,8 @@ import type {
   AppSendMessageType,
   MasterReplyMessageType,
   MasterSendMessageType,
-  Session
+  Session,
+  SessionV1
 } from './types';
 import { isBrowser } from './utils';
 import { getCookie } from './utils/cookieUtils';
@@ -45,12 +46,23 @@ class MasterSDK {
     );
   }
 
-  private get session() {
+  private get session(): SessionV1 | '' {
     const sessionStr = localStorage.getItem('session');
     if (!sessionStr) return '';
-    const session = JSON.parse(sessionStr);
+    const _session = JSON.parse(sessionStr);
+    const session = _session?.state?.session as Session;
 
-    return session?.state?.session as Session;
+    return {
+      user: {
+        id: session.user.userId,
+        k8sUsername: session.user.k8s_username,
+        name: session.user.name,
+        avatar: session.user.avatar,
+        nsid: session.user.nsid
+      },
+      token: session.token,
+      kubeconfig: session.kubeconfig
+    };
   }
 
   /**
@@ -183,7 +195,7 @@ class MasterSDK {
         messageId: data.messageId,
         success: true,
         data: {
-          lng: getCookie('NEXT_LOCALE') || 'en'
+          lng: getCookie('NEXT_LOCALE') || 'zh'
         }
       });
     } else {

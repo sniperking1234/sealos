@@ -1,5 +1,14 @@
+import { UserQuotaItemType } from '@/types/user';
+import { cpuFormatToM, memoryFormatToMi } from '@/utils/tools';
 import * as k8s from '@kubernetes/client-node';
 import * as yaml from 'js-yaml';
+
+// Load default kc
+export function K8sApiDefault(): k8s.KubeConfig {
+  const kc = new k8s.KubeConfig();
+  kc.loadFromDefault();
+  return kc;
+}
 
 export function CheckIsInCluster(): [boolean, string] {
   if (
@@ -23,7 +32,7 @@ export function K8sApi(config = ''): k8s.KubeConfig {
 
   const cluster = kc.getCurrentCluster();
 
-  if (cluster !== null) {
+  if (cluster !== null && process.env.NODE_ENV !== 'development') {
     let server: k8s.Cluster;
 
     const [inCluster, hosts] = CheckIsInCluster();
@@ -44,6 +53,7 @@ export function K8sApi(config = ''): k8s.KubeConfig {
         skipTLSVerify: cluster.skipTLSVerify
       };
     }
+    // console.log(server, 'server');
     kc.clusters.forEach((item, i) => {
       if (item.name === cluster.name) {
         kc.clusters[i] = server;
@@ -86,12 +96,11 @@ export async function createYaml(
     for (const spec of created) {
       try {
         console.log('delete:', spec.kind);
-        client.delete(spec);
+        await client.delete(spec);
       } catch (error) {
-        error;
+        // console.log('delete error', spec.kind);
       }
     }
-    // console.error(error, '<=create error')
     return Promise.reject(error);
   }
   return created;
@@ -119,13 +128,14 @@ export async function updateYaml(
       created.push(response.body);
     }
   } catch (error: any) {
+    console.log('update error');
     /* delete success specs */
     for (const spec of validSpecs) {
       try {
         console.log('delete:', spec.kind);
         await client.delete(spec);
       } catch (error) {
-        error;
+        // console.log('delete error', spec.kind);
       }
     }
     if (error.body.reason === 'AlreadyExists' && canCreate) {
@@ -164,20 +174,19 @@ export async function replaceYaml(
         }
       });
       succeed.push(response.body);
-    } catch (e: any) {
-      // console.error(e?.body || e, "<=replace error")
+    } catch (error: any) {
+      console.log('replace error:', error);
       // no yaml, create it
-      if (e?.body?.code && +e?.body?.code === 404) {
+      if (error?.body?.code && +error?.body?.code === 404) {
         try {
-          console.log('create yaml: ', spec.kind);
+          console.log('create yaml', spec.kind);
           const response = await client.create(spec);
           succeed.push(response.body);
         } catch (error: any) {
-          // console.error(error, '<=create error')
           return Promise.reject(error);
         }
       } else {
-        return Promise.reject(e);
+        return Promise.reject(error);
       }
     }
   }
@@ -194,13 +203,68 @@ export async function delYaml(kc: k8s.KubeConfig, specs: k8s.KubernetesObject[])
       client.delete(spec);
     }
   } catch (error: any) {
-    // console.error(error, '<=create error')
+    // console.log('delete error', error);
     return Promise.reject(error);
   }
 }
 
 export function GetUserDefaultNameSpace(user: string): string {
   return 'ns-' + user;
+}
+
+export async function getUserQuota(
+  kc: k8s.KubeConfig,
+  namespace: string
+): Promise<UserQuotaItemType[]> {
+  const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
+
+  const {
+    body: { status }
+  } = await k8sApi.readNamespacedResourceQuota(`quota-${namespace}`, namespace);
+
+  return [
+    {
+      type: 'cpu',
+      limit: cpuFormatToM(status?.hard?.['limits.cpu'] || '') / 1000,
+      used: cpuFormatToM(status?.used?.['limits.cpu'] || '') / 1000
+    },
+    {
+      type: 'memory',
+      limit: memoryFormatToMi(status?.hard?.['limits.memory'] || '') / 1024,
+      used: memoryFormatToMi(status?.used?.['limits.memory'] || '') / 1024
+    },
+    {
+      type: 'storage',
+      limit: memoryFormatToMi(status?.hard?.['requests.storage'] || '') / 1024,
+      used: memoryFormatToMi(status?.used?.['requests.storage'] || '') / 1024
+    }
+    // {
+    //   type: 'gpu',
+    //   limit: Number(status?.hard?.['requests.nvidia.com/gpu'] || 0),
+    //   used: Number(status?.used?.['requests.nvidia.com/gpu'] || 0)
+    // }
+  ];
+}
+
+export async function getUserBalance(kc: k8s.KubeConfig) {
+  const user = kc.getCurrentUser();
+  if (!user) return 5;
+
+  const k8sApi = kc.makeApiClient(k8s.CustomObjectsApi);
+
+  const { body } = (await k8sApi.getNamespacedCustomObject(
+    'account.sealos.io',
+    'v1',
+    'sealos-system',
+    'accounts',
+    user.name
+  )) as { body: { status: { balance: number; deductionBalance: number } } };
+
+  if (body?.status?.balance !== undefined && body?.status?.deductionBalance !== undefined) {
+    return (body.status.balance - body.status.deductionBalance) / 1000000;
+  }
+
+  return 5;
 }
 
 export async function getK8s({ kubeconfig }: { kubeconfig: string }) {
@@ -212,7 +276,7 @@ export async function getK8s({ kubeconfig }: { kubeconfig: string }) {
     return Promise.reject('用户不存在');
   }
 
-  const namespace = GetUserDefaultNameSpace(kube_user.name);
+  const namespace = kc.contexts[0].namespace || GetUserDefaultNameSpace(kube_user.name);
 
   const applyYamlList = async (yamlList: string[], type: 'create' | 'replace' | 'update') => {
     // insert namespace
@@ -261,9 +325,13 @@ export async function getK8s({ kubeconfig }: { kubeconfig: string }) {
     k8sEvents: kc.makeApiClient(k8s.EventsV1Api),
     k8sAuth: kc.makeApiClient(k8s.RbacAuthorizationV1Api),
     metricsClient: new k8s.Metrics(kc),
+    k8sBatch: kc.makeApiClient(k8s.BatchV1Api),
     kube_user,
     namespace,
     applyYamlList,
-    delYamlList
+    delYamlList,
+    getUserQuota: () => getUserQuota(kc, namespace),
+    getUserBalance: () => getUserBalance(kc),
+    k8sExec: new k8s.Exec(kc)
   });
 }

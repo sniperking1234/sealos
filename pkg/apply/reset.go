@@ -15,6 +15,7 @@
 package apply
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -23,21 +24,20 @@ import (
 	"github.com/labring/sealos/pkg/clusterfile"
 	"github.com/labring/sealos/pkg/constants"
 	"github.com/labring/sealos/pkg/ssh"
-	v2 "github.com/labring/sealos/pkg/types/v1beta1"
 	"github.com/labring/sealos/pkg/utils/logger"
-	stringsutil "github.com/labring/sealos/pkg/utils/strings"
 )
 
 func NewApplierFromResetArgs(cmd *cobra.Command, args *ResetArgs) (applydrivers.Interface, error) {
-	clusterPath := constants.Clusterfile(args.ClusterName)
+	clusterPath := constants.Clusterfile(args.ClusterName.ClusterName)
 	cf := clusterfile.NewClusterFile(clusterPath)
 	err := cf.Process()
+	// incase we want to reset force
 	if err != nil && err != clusterfile.ErrClusterFileNotExists {
 		return nil, err
 	}
 	cluster := cf.GetCluster()
 	if cluster == nil {
-		cluster = initCluster(args.ClusterName)
+		return nil, errors.New("clusterfile must exist")
 	}
 	c := &ClusterArgs{
 		clusterName: cluster.Name,
@@ -50,28 +50,19 @@ func NewApplierFromResetArgs(cmd *cobra.Command, args *ResetArgs) (applydrivers.
 }
 
 func (r *ClusterArgs) resetArgs(cmd *cobra.Command, args *ResetArgs) error {
-	if args.Cluster.ClusterName == "" {
+	if args.ClusterName.ClusterName == "" {
 		return fmt.Errorf("cluster name can not be empty")
-	}
-	if err := PreProcessIPList(args.Cluster); err != nil {
-		return err
 	}
 	override := getSSHFromCommand(cmd)
 	if override != nil {
-		r.cluster.Spec.SSH = *override
+		ssh.OverSSHConfig(&r.cluster.Spec.SSH, override)
 	}
 
-	if len(args.Cluster.Masters) > 0 {
-		masters := stringsutil.SplitRemoveEmpty(args.Cluster.Masters, ",")
-		nodes := stringsutil.SplitRemoveEmpty(args.Cluster.Nodes, ",")
-		r.hosts = []v2.Host{}
-
-		sshClient := ssh.NewSSHByCluster(r.cluster, true)
-		r.setHostWithIpsPort(masters, []string{v2.MASTER, GetHostArch(sshClient, masters[0])})
-		if len(nodes) > 0 {
-			r.setHostWithIpsPort(nodes, []string{v2.NODE, GetHostArch(sshClient, nodes[0])})
-		}
-		r.cluster.Spec.Hosts = r.hosts
+	if r.cluster.ObjectMeta.CreationTimestamp.IsZero() {
+		return errors.New("creation time must be specified in clusterfile")
+	}
+	if len(r.cluster.Spec.Hosts) == 0 {
+		return errors.New("host must not be empty in clusterfile")
 	}
 	logger.Debug("cluster info: %v", r.cluster)
 	return nil

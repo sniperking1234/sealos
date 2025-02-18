@@ -7,7 +7,7 @@ export function K8sApi(config: string): k8s.KubeConfig {
   kc.loadFromString(config);
 
   const cluster = kc.getCurrentCluster();
-  if (cluster !== null) {
+  if (cluster !== null && process.env.NODE_ENV !== 'development') {
     let server: k8s.Cluster;
 
     const [inCluster, hosts] = CheckIsInCluster();
@@ -36,8 +36,6 @@ export function K8sApi(config: string): k8s.KubeConfig {
     });
   }
 
-  // console.log(kc);
-
   return kc;
 }
 
@@ -58,7 +56,7 @@ export type CRDMeta = {
   plural: string; // type
 };
 
-export async function GetCRD<T = any>(kc: k8s.KubeConfig, meta: CRDMeta, name: string) {
+export async function GetCRD(kc: k8s.KubeConfig, meta: CRDMeta, name: string) {
   return kc.makeApiClient(k8s.CustomObjectsApi).getNamespacedCustomObject(
     meta.group,
     meta.version,

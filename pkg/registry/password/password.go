@@ -20,19 +20,17 @@ import (
 	"fmt"
 	"path"
 
-	"github.com/labring/sealos/pkg/utils/passwd"
-
-	"github.com/labring/sealos/pkg/registry/helpers"
-
 	"github.com/labring/image-cri-shim/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/yaml"
 
 	"github.com/labring/sealos/pkg/constants"
-	"github.com/labring/sealos/pkg/ssh"
+	"github.com/labring/sealos/pkg/exec"
+	"github.com/labring/sealos/pkg/registry/helpers"
 	"github.com/labring/sealos/pkg/types/v1beta1"
 	"github.com/labring/sealos/pkg/utils/file"
 	"github.com/labring/sealos/pkg/utils/logger"
+	"github.com/labring/sealos/pkg/utils/passwd"
 )
 
 type RegistryType string
@@ -49,17 +47,17 @@ type Upgrade interface {
 	UpdateImageShimConfig(rc *types.Config, target, host string) error
 }
 
-func NewUpgrade(name string, sshInterface ssh.Interface) Upgrade {
-	return &upgrade{Cluster: name, SSHInterface: sshInterface, mk: &maker{sets.NewString()}}
+func NewUpgrade(name string, sshInterface exec.Interface) Upgrade {
+	return &upgrade{Cluster: name, SSHInterface: sshInterface, mk: &maker{sets.New[string]()}}
 }
 
 type maker struct {
-	paths sets.String
+	paths sets.Set[string]
 }
 
 type upgrade struct {
 	Cluster            string
-	SSHInterface       ssh.Interface
+	SSHInterface       exec.Interface
 	RegistryConfig     *v1beta1.RegistryConfig
 	ImageCRIShimConfig *types.Config
 	mk                 *maker

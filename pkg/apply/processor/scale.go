@@ -18,8 +18,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/labring/sealos/pkg/guest"
-
 	"golang.org/x/sync/errgroup"
 
 	"github.com/labring/sealos/pkg/bootstrap"
@@ -29,7 +27,9 @@ import (
 	"github.com/labring/sealos/pkg/config"
 	"github.com/labring/sealos/pkg/constants"
 	"github.com/labring/sealos/pkg/filesystem/rootfs"
+	"github.com/labring/sealos/pkg/guest"
 	"github.com/labring/sealos/pkg/runtime"
+	"github.com/labring/sealos/pkg/runtime/factory"
 	v2 "github.com/labring/sealos/pkg/types/v1beta1"
 	fileutil "github.com/labring/sealos/pkg/utils/file"
 	"github.com/labring/sealos/pkg/utils/logger"
@@ -116,11 +116,8 @@ func (c *ScaleProcessor) RunGuest(cluster *v2.Cluster) error {
 
 func (c *ScaleProcessor) Delete(cluster *v2.Cluster) error {
 	logger.Info("Executing pipeline Delete in ScaleProcessor.")
-	err := c.Runtime.DeleteMasters(c.MastersToDelete)
+	err := c.Runtime.ScaleDown(c.MastersToDelete, c.NodesToDelete)
 	if err != nil {
-		return err
-	}
-	if err = c.Runtime.DeleteNodes(c.NodesToDelete); err != nil {
 		return err
 	}
 	if len(c.MastersToDelete) > 0 {
@@ -131,11 +128,7 @@ func (c *ScaleProcessor) Delete(cluster *v2.Cluster) error {
 
 func (c *ScaleProcessor) Join(cluster *v2.Cluster) error {
 	logger.Info("Executing pipeline Join in ScaleProcessor.")
-	err := c.Runtime.JoinMasters(c.MastersToJoin)
-	if err != nil {
-		return err
-	}
-	err = c.Runtime.JoinNodes(c.NodesToJoin)
+	err := c.Runtime.ScaleUp(c.MastersToJoin, c.NodesToJoin)
 	if err != nil {
 		return err
 	}
@@ -161,11 +154,11 @@ func (c ScaleProcessor) UnMountRootfs(cluster *v2.Cluster) error {
 
 func (c *ScaleProcessor) JoinCheck(cluster *v2.Cluster) error {
 	logger.Info("Executing pipeline JoinCheck in ScaleProcessor.")
-	var ips []string
+	var ips, scales []string
 	ips = append(ips, cluster.GetMaster0IPAndPort())
-	ips = append(ips, c.MastersToJoin...)
-	ips = append(ips, c.NodesToJoin...)
-	return NewCheckError(checker.RunCheckList([]checker.Interface{checker.NewIPsHostChecker(ips)}, cluster, checker.PhasePre))
+	scales = append(c.MastersToJoin, c.NodesToJoin...)
+	ips = append(ips, scales...)
+	return NewCheckError(checker.RunCheckList([]checker.Interface{checker.NewIPsHostChecker(ips), checker.NewContainerdChecker(scales)}, cluster, checker.PhasePre))
 }
 
 func (c *ScaleProcessor) DeleteCheck(cluster *v2.Cluster) error {
@@ -202,18 +195,19 @@ func (c *ScaleProcessor) preProcess(cluster *v2.Cluster) error {
 				obj = append(obj, configs[i])
 			}
 		}
-		if err = yaml.MarshalYamlToFile(clusterPath, obj...); err != nil {
+		if err = yaml.MarshalFile(clusterPath, obj...); err != nil {
 			return err
 		}
 	}
 	if err = SyncClusterStatus(cluster, c.Buildah, false); err != nil {
 		return err
 	}
+
 	var rt runtime.Interface
 	if c.IsScaleUp {
-		rt, err = runtime.NewDefaultRuntimeWithCurrentCluster(cluster, c.ClusterFile.GetKubeadmConfig())
+		rt, err = factory.New(cluster, c.ClusterFile.GetRuntimeConfig())
 	} else {
-		rt, err = runtime.NewDefaultRuntimeWithCurrentCluster(c.ClusterFile.GetCluster(), c.ClusterFile.GetKubeadmConfig())
+		rt, err = factory.New(c.ClusterFile.GetCluster(), c.ClusterFile.GetRuntimeConfig())
 	}
 	if err != nil {
 		return fmt.Errorf("failed to init runtime: %v", err)
@@ -264,21 +258,29 @@ func (c *ScaleProcessor) MountRootfs(cluster *v2.Cluster) error {
 	// since app type images are only sent to the first master, in
 	// cluster scaling scenario we don't need to sent app images repeatedly.
 	// so filter out rootfs/patch type
-	fs, err := rootfs.NewRootfsMounter(filterNoneApplicationMounts(cluster.Status.Mounts))
+	mounts, err := sortAndFilterNoneApplicationMounts(cluster)
+	if err != nil {
+		return err
+	}
+	fs, err := rootfs.NewRootfsMounter(mounts)
 	if err != nil {
 		return err
 	}
 	return fs.MountRootfs(cluster, hosts)
 }
 
-func filterNoneApplicationMounts(images []v2.MountImage) []v2.MountImage {
+func sortAndFilterNoneApplicationMounts(cluster *v2.Cluster) ([]v2.MountImage, error) {
 	ret := make([]v2.MountImage, 0)
-	for i := range images {
-		if images[i].Type != v2.AppImage {
-			ret = append(ret, images[i])
+	for _, img := range cluster.Spec.Image {
+		idx := getIndexOfContainerInMounts(cluster.Status.Mounts, img)
+		if idx == -1 {
+			return ret, fmt.Errorf("image %s not mount", img)
+		}
+		if cluster.Status.Mounts[idx].Type != v2.AppImage {
+			ret = append(ret, cluster.Status.Mounts[idx])
 		}
 	}
-	return ret
+	return ret, nil
 }
 
 func (c *ScaleProcessor) Bootstrap(cluster *v2.Cluster) error {

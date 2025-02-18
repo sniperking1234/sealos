@@ -1,37 +1,34 @@
-import React, { useLayoutEffect } from 'react'
-import CometIcon from '../Comet'
-import RouteIcon from '@site/static/icons/route-icon.svg'
-import useIsBrowser from '@docusaurus/useIsBrowser'
-import './index.scss'
-import Translate from '@docusaurus/Translate'
+import React, { useLayoutEffect } from 'react';
+import CometIcon from '../Comet';
+import RouteIcon from '@site/static/icons/route-icon.svg';
+import useIsBrowser from '@docusaurus/useIsBrowser';
+import './index.scss';
+import Translate from '@docusaurus/Translate';
 
 const Introduce = ({ isPc }: { isPc: boolean }) => {
-  const isBrowser = useIsBrowser()
+  const isBrowser = useIsBrowser();
 
   const i18nObj = {
-    whySealos: <Translate>Why Sealos</Translate>,
-    lowerCosts: <Translate>Lower Costs</Translate>,
+    whySealos: <Translate>Why Choose Sealos?</Translate>,
+    lowerCosts: <Translate>Efficient & Cost-Effective</Translate>,
     lowerCostsIntroduce: (
       <Translate>
-        Save resources and reduce expenses by paying only for containers, with
-        automatic scaling to prevent waste.
+        Pay only for the containers you use. Auto-scaling prevents wasted resources, saving you a lot of money.
       </Translate>
     ),
-    userFriendly: <Translate>User Friendly</Translate>,
+    userFriendly: <Translate>Universal & User-Friendly</Translate>,
     userFriendlyIntroduce: (
       <Translate>
-        Focus on your business without being bogged down by unnecessary
-        complexity, regardless of your level of Kubernetes expertise.
+        Focus on your business without worrying about complexity. There is almost no learning curve.
       </Translate>
     ),
-    flexibilitySecurity: <Translate>Flexibility and Security</Translate>,
+    flexibilitySecurity: <Translate>Flexible & Secure</Translate>,
     flexibilitySecurityIntroduce: (
       <Translate>
-        Its unique multi-tenant sharing mechanism can achieve effective resource
-        isolation and collaboration while ensuring safety.
+        The multi-tenant sharing mechanism ensures security while providing resource isolation and efficient collaboration.
       </Translate>
-    ),
-  }
+    )
+  };
 
   useLayoutEffect(() => {
     // @ts-ignore nextline
@@ -42,10 +39,10 @@ const Introduce = ({ isPc }: { isPc: boolean }) => {
         animateClass: 'animate__fadeIn',
         offset: 0,
         mobile: true,
-        live: false,
-      }).init()
+        live: false
+      }).init();
     }
-  }, [isBrowser])
+  }, [isBrowser]);
 
   if (!isPc) {
     return (
@@ -53,7 +50,7 @@ const Introduce = ({ isPc }: { isPc: boolean }) => {
         <div className="comet-icon">
           <CometIcon />
         </div>
-        <h1>{i18nObj.whySealos}</h1>
+        <div className="sealos-main-whysealos">{i18nObj.whySealos}</div>
         <div className="features">
           <div className="route">
             <div className="icon1">
@@ -74,7 +71,8 @@ const Introduce = ({ isPc }: { isPc: boolean }) => {
                 width="20"
                 height="19"
                 viewBox="0 0 20 19"
-                fill="none">
+                fill="none"
+              >
                 <circle cx="10.0002" cy="9.51913" r="9.18033" fill="#193246" />
               </svg>
             </div>
@@ -87,13 +85,11 @@ const Introduce = ({ isPc }: { isPc: boolean }) => {
             <div className="aid-text">{i18nObj.userFriendlyIntroduce}</div>
 
             <div className="tag tag3">{i18nObj.flexibilitySecurity}</div>
-            <div className="aid-text">
-              {i18nObj.flexibilitySecurityIntroduce}
-            </div>
+            <div className="aid-text">{i18nObj.flexibilitySecurityIntroduce}</div>
           </div>
         </div>
       </div>
-    )
+    );
   }
 
   return (
@@ -101,7 +97,7 @@ const Introduce = ({ isPc }: { isPc: boolean }) => {
       <div className="comet-icon">
         <CometIcon />
       </div>
-      <h1>{i18nObj.whySealos}</h1>
+      <div className="sealos-main-whysealos">{i18nObj.whySealos}</div>
       <div className="features">
         <div className="left animate__fadeIn" data-wow-duration="1s">
           <div className="tag tag1">{i18nObj.lowerCosts}</div>
@@ -130,7 +126,8 @@ const Introduce = ({ isPc }: { isPc: boolean }) => {
               width="20"
               height="19"
               viewBox="0 0 20 19"
-              fill="none">
+              fill="none"
+            >
               <circle cx="10.0002" cy="9.51913" r="9.18033" fill="#193246" />
             </svg>
           </div>
@@ -141,7 +138,7 @@ const Introduce = ({ isPc }: { isPc: boolean }) => {
         </div>
       </div>
     </div>
-  )
-}
+  );
+};
 
-export default React.memo(Introduce)
+export default React.memo(Introduce);

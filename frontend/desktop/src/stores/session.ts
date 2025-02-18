@@ -1,75 +1,102 @@
-import { create } from 'zustand';
-import { devtools, persist } from 'zustand/middleware';
-import { immer } from 'zustand/middleware/immer';
 import { Session, sessionKey } from '@/types';
-import { Provider } from '@/types/user';
-const yaml = require('js-yaml');
-
+import { OauthProvider } from '@/types/user';
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+import { immer } from 'zustand/middleware/immer';
+type StatePayload = {
+  rad: string;
+  action: OauthAction;
+};
+export type OauthAction = 'LOGIN' | 'BIND' | 'UNBIND' | 'PROXY';
 type SessionState = {
-  session: Session;
-  provider?: Provider;
+  session?: Session;
+  token: string;
+  provider?: OauthProvider;
   oauth_state: string;
-  newUser?: boolean;
-  updateUser: () => void;
+  firstUse: Date | null;
   setSession: (ss: Session) => void;
-  setSessionProp: (key: keyof Session, value: any) => void;
-  getSession: () => Session;
+  setSessionProp: <T extends keyof Session>(key: T, value: Session[T]) => void;
   delSession: () => void;
+  setFirstUse: (d: Date | null) => void;
   isUserLogin: () => boolean;
-  getKubeconfigToken: () => string;
-  generateState: () => string;
-  compareState: (state: string) => boolean;
-  setProvider: (provider?: 'github' | 'wechat' | 'phone') => void;
+  /*
+			when proxy oauth2.0 ,the domainState need to be used 
+	*/
+  generateState: (action?: OauthAction, domainState?: string) => string;
+  compareState: (state: string) => {
+    isSuccess: boolean;
+    action: string;
+    statePayload: string[];
+  };
+
+  setProvider: (provider?: OauthProvider) => void;
+  setToken: (token: string) => void;
+  lastWorkSpaceId: string;
+  setWorkSpaceId: (id: string) => void;
 };
 
 const useSessionStore = create<SessionState>()(
-  devtools(
-    persist(
-      immer((set, get) => ({
-        session: {} as Session,
-        provider: undefined,
-        oauth_state: '',
-        newUser: false,
-        setSession: (ss: Session) => set({ session: ss }),
-        updateUser: () =>
-          set((state) => {
-            state.newUser = true;
-          }),
-        setSessionProp: (key: keyof Session, value: any) => {
-          set((state) => {
+  persist(
+    immer((set, get) => ({
+      session: undefined,
+      provider: undefined,
+      firstUse: null,
+      oauth_state: '',
+      token: '',
+      lastWorkSpaceId: '',
+      setFirstUse(d) {
+        set({
+          firstUse: d
+        });
+      },
+      setSession: (ss: Session) => set({ session: ss }),
+      setSessionProp: (key: keyof Session, value: any) => {
+        set((state) => {
+          if (state.session) {
             state.session[key] = value;
-          });
-        },
-        getSession: () => get().session,
-        delSession: () => {
-          set({ session: undefined });
-        },
-        isUserLogin: () => get().session?.user?.id !== undefined,
-        getKubeconfigToken: () => {
-          if (get().session?.kubeconfig === '') {
-            return '';
           }
-          const doc = yaml.load(get().session.kubeconfig);
-          return doc?.users[0]?.user?.token;
-        },
-        generateState: () => {
-          const state = new Date().getTime().toString();
-          set({ oauth_state: state });
-          return state;
-        },
-        compareState: (state: string) => {
-          let result = state === get().oauth_state;
-          set({ oauth_state: undefined });
-          return result;
-        },
-        setProvider: (provider?: Provider) => {
-          set({ provider });
+        });
+      },
+      delSession: () => {
+        set({ session: undefined });
+      },
+      isUserLogin: () => !!get().session?.user,
+      // [LOGIN/UNBIND/BIND]_STATE
+      // PROXY_DOMAINSTATE, DOMAINSTATE = URL_[LOGIN/UNBIND/BIND]_STATE
+      generateState: (action = 'LOGIN', domainState) => {
+        let state = action as string;
+        if (domainState && action === 'PROXY') {
+          state = state + '_' + domainState;
+        } else {
+          state = state + '_' + new Date().getTime().toString();
         }
-      })),
-      {
-        name: sessionKey
+        set({ oauth_state: state });
+        return state;
+      },
+      compareState: (state: string) => {
+        // fix wechat
+        let isSuccess = decodeURIComponent(state) === decodeURIComponent(get().oauth_state);
+        const [action, ...statePayload] = state.split('_');
+        set({ oauth_state: undefined });
+        return {
+          isSuccess,
+          action,
+          statePayload
+        };
+      },
+      setProvider: (provider?: OauthProvider) => {
+        set({ provider });
+      },
+      setToken: (token) => {
+        set({ token });
+      },
+      setWorkSpaceId: (id) => {
+        set({ lastWorkSpaceId: id });
       }
-    )
+    })),
+    {
+      name: sessionKey
+    }
   )
 );
 

@@ -5,20 +5,24 @@ import { ApiResp } from '@/services/kubernet';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ApiResp>) {
-  const { yamlList }: { yamlList: string[] } = req.body;
-  if (!yamlList || yamlList.length < 2) {
-    jsonRes(res, {
+  const { yamlList, type = 'create' } = req.body as {
+    yamlList: string[];
+    type: 'create' | 'replace' | 'dryrun';
+  };
+
+  if (!yamlList) {
+    return jsonRes(res, {
       code: 500,
-      error: 'params error'
+      error: 'yaml list is empty'
     });
-    return;
   }
+
   try {
     const { applyYamlList } = await getK8s({
       kubeconfig: await authSession(req.headers)
     });
 
-    const applyRes = await applyYamlList(yamlList, 'create');
+    const applyRes = await applyYamlList(yamlList, type);
 
     jsonRes(res, { data: applyRes.map((item) => item.kind) });
   } catch (err: any) {

@@ -5,6 +5,7 @@ import { nanoid } from 'nanoid';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 import styles from './index.module.scss';
+import useSessionStore from '@/store/session';
 
 type Terminal = {
   id: string;
@@ -16,7 +17,8 @@ function Terminal({ url, site }: { url: string; site: string }) {
   const router = useRouter();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const { query } = router;
-
+  const session = useSessionStore((s) => s.session);
+  const nsid = session?.user?.nsid;
   const [tabContents, setTabContents] = useState<Terminal[]>([
     {
       id: tabId,
@@ -36,8 +38,20 @@ function Terminal({ url, site }: { url: string; site: string }) {
           newTerminal(decodeURIComponent(e.data.command));
         }
         if (e.data?.ttyd === 'ready') {
+          iframeRef.current?.contentWindow?.postMessage(
+            {
+              command: `kubectl config set-context --current --namespace=${nsid} && export PS1="\\u@(${nsid}) \\W\\$ " && clear`
+            },
+            url
+          );
+          iframeRef.current?.contentWindow?.postMessage(
+            {
+              command: `echo -e "\\e[A\\e[K 👉  Switched to namespace \\e[1;4;32m${nsid}\\e[0m" && history -c`
+            },
+            url
+          );
           const command = iframeRef.current?.getAttribute('data-command');
-          iframeRef?.current?.contentWindow?.postMessage({ command: command }, url);
+          iframeRef?.current?.contentWindow?.postMessage({ command }, url);
         }
       } catch (error) {
         console.log(error, 'error');
